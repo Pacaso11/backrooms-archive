@@ -27,6 +27,13 @@
       "expo-router",
       "expo-font",
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "fc170f20-442d-4884-80f5-f5ced44ab5d8"
+      }
+    },
+    "owner": "pacaso11"
   }
 }
