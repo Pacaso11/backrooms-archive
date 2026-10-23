@@ -58,7 +58,7 @@ Si deseas clonar el proyecto y ejecutarlo en tu propio entorno:
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/TU_USUARIO/backrooms-archive.git
+git clone https://github.com/Pacaso11/backrooms-archive.git
 cd backrooms-archive
 
 # 2. Instalar dependencias

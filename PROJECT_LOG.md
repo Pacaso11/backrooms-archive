@@ -56,7 +56,7 @@ npx.cmd expo-doctor
 ## 3. 🗺️ Estructura del Proyecto
 
 ```
-d:\IA\backrooms\
+backrooms-archive/
 ├── src\
 │   ├── app\                                # Rutas de Expo Router (Cada archivo = Pantalla)
 │   │   ├── _layout.tsx                     # Root Layout con Stack Navigator (fondo oscuro)
@@ -239,16 +239,16 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
    - **Migración de Caché Global (`@backrooms_cached_items_v4`)**: Se incrementó la clave de persistencia en `storageService.ts` a `v4` para forzar la rehidratación fresca de todos los artículos con el nuevo motor de lenguaje natural.
 
 21. **Unificación de Diseño en Tablets, Limpieza de Objetos Residuales y Ajuste del Selector de Idioma**:
-   - **Diseño a Pantalla Completa en Tablets (Eliminación de Split View)**: Se modificó [useResponsiveLayout.ts](file:///d:/IA/backrooms/src/hooks/useResponsiveLayout.ts) para desactivar el modo divido (`isSplitView: false`). En tablets y pantallas grandes, la interfaz ahora funciona con el mismo flujo inmersivo que en móvil: las listas de niveles, entidades, biblioteca y favoritos ocupan el 100% del ancho de la pantalla, y al pulsar cualquier elemento se abre el expediente a pantalla completa en `dossier/[id]` con su botón táctico de retroceso (`[ <- ÍNDICE ]`).
-   - **Depuración de Entradas Residuales en la Biblioteca (Objetos, Fenómenos, etc.)**: En [wikidotService.ts](file:///d:/IA/backrooms/src/services/wikidotService.ts) se implementó un filtro estricto en el scraper para erradicar enlaces de navegación y metadatos de Wikidot:
+   - **Diseño a Pantalla Completa en Tablets (Eliminación de Split View)**: Se modificó `src/hooks/useResponsiveLayout.ts` para desactivar el modo divido (`isSplitView: false`). En tablets y pantallas grandes, la interfaz ahora funciona con el mismo flujo inmersivo que en móvil: las listas de niveles, entidades, biblioteca y favoritos ocupan el 100% del ancho de la pantalla, y al pulsar cualquier elemento se abre el expediente a pantalla completa en `dossier/[id]` con su botón táctico de retroceso (`[ <- ÍNDICE ]`).
+   - **Depuración de Entradas Residuales en la Biblioteca (Objetos, Fenómenos, etc.)**: En `src/services/wikidotService.ts` se implementó un filtro estricto en el scraper para erradicar enlaces de navegación y metadatos de Wikidot:
      - Se eliminaron páginas como `/members-only:rewrite-policy` (que provocaban el mensaje confidencial "Esta área del sitio web es privada y no tienes acceso a ella"), `/random:random-object` ("Random Object?"), `/trimmed:...`, enlaces con ancla `"here"` / `"aquí"`, políticas de reescritura, y números sueltos de paginación (`/p/2`).
-     - Se actualizó la clave de caché en [storageService.ts](file:///d:/IA/backrooms/src/services/storageService.ts) a `@backrooms_library_${type}_v2` y se añadió un filtro defensivo en tiempo de lectura para purgar cualquier entrada residual previamente guardada en el dispositivo.
+     - Se actualizó la clave de caché en `src/services/storageService.ts` a `@backrooms_library_${type}_v2` y se añadió un filtro defensivo en tiempo de lectura para purgar cualquier entrada residual previamente guardada en el dispositivo.
    - **Ajuste del Selector de Idioma y Barra Superior (`LanguageToggle` & `DossierView`)**:
-     - Se agregó `flexShrink: 0` a [LanguageToggle.tsx](file:///d:/IA/backrooms/src/components/LanguageToggle.tsx) para evitar que los contenedores flexibles compriman u oculten el botón en inglés (`EN`).
-     - En [DossierView.tsx](file:///d:/IA/backrooms/src/components/DossierView.tsx), se dotó a la barra de acciones superior (`topActionsBar`) de `flexWrap: 'wrap'` y espaciado proporcional (`gap: 8`), garantizando que ni el sello confidencial ni los botones de acción (lector Aa, selector de idioma, favoritos, refresco y compartir) queden incrustados fuera de pantalla ante variaciones de ancho.
+     - Se agregó `flexShrink: 0` a `src/components/LanguageToggle.tsx` para evitar que los contenedores flexibles compriman u oculten el botón en inglés (`EN`).
+     - En `src/components/DossierView.tsx`, se dotó a la barra de acciones superior (`topActionsBar`) de `flexWrap: 'wrap'` y espaciado proporcional (`gap: 8`), garantizando que ni el sello confidencial ni los botones de acción (lector Aa, selector de idioma, favoritos, refresco y compartir) queden incrustados fuera de pantalla ante variaciones de ancho.
    - **Verificación y Compilación**:
      - `npx expo lint` y `npx tsc --noEmit` completados con 0 errores.
-     - Release APK compilado exitosamente y generado en la raíz: [Backrooms_Archive_v1.0.0.apk](file:///d:/IA/backrooms/Backrooms_Archive_v1.0.0.apk) (88.4 MB).
+     - Release APK compilado exitosamente y generado en la raíz: `Backrooms_Archive_v1.0.0.apk`.
 
 22. **Publicación Oficial del Proyecto en GitHub (Código Abierto & Releases)**:
    - **Configuración de Entorno de Control de Versiones**: Se instaló y vinculó Git (`MinGit v2.56`) y la CLI oficial de GitHub (`gh v2.103`).
