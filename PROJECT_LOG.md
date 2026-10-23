@@ -250,6 +250,12 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
      - `npx expo lint` y `npx tsc --noEmit` completados con 0 errores.
      - Release APK compilado exitosamente y generado en la raíz: [Backrooms_Archive_v1.0.0.apk](file:///d:/IA/backrooms/Backrooms_Archive_v1.0.0.apk) (88.4 MB).
 
+22. **Publicación Oficial del Proyecto en GitHub (Código Abierto & Releases)**:
+   - **Configuración de Entorno de Control de Versiones**: Se instaló y vinculó Git (`MinGit v2.56`) y la CLI oficial de GitHub (`gh v2.103`).
+   - **Creación del Repositorio Público**: Repositorio oficial creado bajo la cuenta del autor: [Pacaso11/backrooms-archive](https://github.com/Pacaso11/backrooms-archive).
+   - **Documentación y Presentación**: Redacción de un `README.md` con temática táctica M.E.G., insignias de Expo SDK 57, TypeScript, React Native y enlace directo de descarga.
+   - **Lanzamiento v1.0.0 (GitHub Releases)**: Se publicó la primera versión oficial con etiqueta `v1.0.0` y se subió el binario instalable [Backrooms_Archive_v1.0.0.apk](https://github.com/Pacaso11/backrooms-archive/releases/tag/v1.0.0) para descarga directa de la comunidad.
+
 ---
 
 ## 7. 🤝 Protocolo para Futuros Agentes de IA
