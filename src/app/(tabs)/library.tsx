@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { WikiListItem, LibraryCategoryDef } from '../../types/wikidot';
-import { WikidotService, LIBRARY_CATEGORIES } from '../../services/wikidotService';
+import { WikidotService, LIBRARY_CATEGORIES, inferItemCategory } from '../../services/wikidotService';
 import { StorageService } from '../../services/storageService';
 import { LibraryItemCard } from '../../components/LibraryItemCard';
 import { SearchBar } from '../../components/SearchBar';
@@ -24,6 +24,7 @@ import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLanguage } from '../../context/LanguageContext';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -33,14 +34,15 @@ export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { isSplitView, masterWidth } = useResponsiveLayout();
+  const { language: lang, setLanguage } = useLanguage();
 
   const [activeCategory, setActiveCategory] = useState<LibraryCategoryDef>(LIBRARY_CATEGORIES[0]);
   const [items, setItems] = useState<WikiListItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedPath, setSelectedPath] = useState<string>('');
-  const [lang, setLang] = useState<'es' | 'en'>('es');
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
@@ -56,8 +58,8 @@ export default function LibraryScreen() {
 
   const loadCategoryItems = useCallback(async (cat: LibraryCategoryDef, targetLang?: 'es' | 'en', forceRefresh = false) => {
     try {
-      const currentLang = targetLang || (await StorageService.getLanguage());
-      setLang(currentLang);
+      setError(null);
+      const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
         const cached = await StorageService.getCachedIndex(cat.key);
@@ -78,31 +80,34 @@ export default function LibraryScreen() {
         setSelectedPath(data[0].path);
       }
       await StorageService.saveIndexToCache(cat.key, data);
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Error loading library category ${cat.key}:`, err);
+      setError(err?.message || (lang === 'es' ? 'Error al cargar la categoría del archivo' : 'Failed to load library category'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [selectedPath]);
+  }, [lang, selectedPath]);
 
   useEffect(() => {
-    loadCategoryItems(activeCategory);
-  }, [activeCategory, loadCategoryItems]);
+    loadCategoryItems(activeCategory, lang);
+  }, [activeCategory, lang, loadCategoryItems]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadCategoryItems(activeCategory, lang, true);
   }, [activeCategory, lang, loadCategoryItems]);
 
-  const handleLanguageChange = useCallback((newLang: 'es' | 'en') => {
-    setLang(newLang);
+  const handleLanguageChange = useCallback(async (newLang: 'es' | 'en') => {
+    await setLanguage(newLang);
     loadCategoryItems(activeCategory, newLang, true);
-  }, [activeCategory, loadCategoryItems]);
+  }, [activeCategory, loadCategoryItems, setLanguage]);
 
   const handleCategorySelect = useCallback((cat: LibraryCategoryDef) => {
     if (cat.key === activeCategory.key) return;
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setItems([]);
+    setError(null);
     setActiveCategory(cat);
     setSearch('');
     setSelectedPath('');
@@ -161,7 +166,35 @@ export default function LibraryScreen() {
 
   const handleItemPress = useCallback((item: WikiListItem) => {
     setSelectedPath(item.path);
-    const catParam = activeCategory.key === 'objects' ? 'object' : activeCategory.key === 'phenomena' ? 'phenomenon' : 'canon';
+    const catParam = (item.category && item.category !== 'archive')
+      ? item.category
+      : inferItemCategory(
+          item.id,
+          item.path,
+          activeCategory.key === 'objects'
+            ? 'object'
+            : activeCategory.key === 'phenomena'
+            ? 'phenomenon'
+            : activeCategory.key === 'groups'
+            ? 'group'
+            : activeCategory.key === 'tales'
+            ? 'tale'
+            : activeCategory.key === 'poi'
+            ? 'poi'
+            : activeCategory.key === 'canons'
+            ? 'canon'
+            : activeCategory.key === 'subclusters'
+            ? 'subcluster'
+            : activeCategory.key === 'jokes'
+            ? 'joke'
+            : activeCategory.key === 'enigmatic_levels'
+            ? 'level'
+            : activeCategory.key === 'enigmatic_entities'
+            ? 'entity'
+            : activeCategory.key === 'art_gallery'
+            ? 'art'
+            : undefined
+        );
     router.push(`/dossier/${item.id}?category=${catParam}`);
   }, [activeCategory, router]);
 
@@ -304,7 +337,24 @@ export default function LibraryScreen() {
         </View>
 
         {/* Items List */}
-        {loading && !refreshing ? (
+        {error && items.length === 0 ? (
+          <View style={styles.centerContainer}>
+            <Ionicons name="alert-circle-outline" size={48} color={THEME.colors.accentRed} />
+            <Text style={styles.errorTitle}>
+              {lang === 'es' ? 'ERROR DE CONEXIÓN AL ARCHIVO' : 'ARCHIVE CONNECTION ERROR'}
+            </Text>
+            <Text style={styles.errorSub}>{error}</Text>
+            <Pressable
+              style={styles.retryButton}
+              onPress={() => loadCategoryItems(activeCategory, lang, true)}
+            >
+              <Ionicons name="refresh" size={16} color={THEME.colors.textPrimary} />
+              <Text style={styles.retryButtonText}>
+                {lang === 'es' ? 'REINTENTAR ACCESO' : 'RETRY ACCESS'}
+              </Text>
+            </Pressable>
+          </View>
+        ) : loading && !refreshing ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color={activeCategory.color} />
             <Text style={styles.loadingText}>
@@ -314,41 +364,57 @@ export default function LibraryScreen() {
             </Text>
           </View>
         ) : (
-          <FlatList
-            data={filteredItems}
-            keyExtractor={item => item.id}
-            renderItem={renderItem}
-            contentContainerStyle={{ paddingBottom: bottomListPadding, paddingTop: 4 }}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={activeCategory.color}
-                colors={[activeCategory.color]}
-              />
-            }
-            initialNumToRender={10}
-            maxToRenderPerBatch={12}
-            windowSize={5}
-            removeClippedSubviews={Platform.OS === 'android'}
-            ListEmptyComponent={
-              <View style={styles.centerContainer}>
-                <Ionicons name="folder-open-outline" size={44} color={THEME.colors.textMuted} />
-                <Text style={styles.emptyTitle}>
-                  {lang === 'es' ? 'SIN EXPEDIENTES ENCONTRADOS' : 'NO DOSSIERS FOUND'}
-                </Text>
-                <Text style={styles.emptySub}>
-                  {search
-                    ? lang === 'es'
-                      ? 'No hay registros que coincidan con la búsqueda.'
-                      : 'No records match the current search.'
-                    : lang === 'es'
-                    ? 'No se encontraron expedientes en este módulo de la biblioteca.'
-                    : 'No dossiers located in this library archive module.'}
-                </Text>
+          <>
+            {error && items.length > 0 && (
+              <View style={styles.inlineErrorBanner}>
+                <Ionicons name="warning-outline" size={16} color={THEME.colors.accentRed} />
+                <Text style={styles.inlineErrorText} numberOfLines={2}>{error}</Text>
+                <Pressable
+                  style={styles.inlineRetryBtn}
+                  onPress={() => loadCategoryItems(activeCategory, lang, true)}
+                >
+                  <Text style={styles.inlineRetryText}>
+                    {lang === 'es' ? 'REINTENTAR' : 'RETRY'}
+                  </Text>
+                </Pressable>
               </View>
-            }
-          />
+            )}
+            <FlatList
+              data={filteredItems}
+              keyExtractor={item => item.id}
+              renderItem={renderItem}
+              contentContainerStyle={{ paddingBottom: bottomListPadding, paddingTop: 4 }}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={activeCategory.color}
+                  colors={[activeCategory.color]}
+                />
+              }
+              initialNumToRender={10}
+              maxToRenderPerBatch={12}
+              windowSize={5}
+              removeClippedSubviews={Platform.OS === 'android'}
+              ListEmptyComponent={
+                <View style={styles.centerContainer}>
+                  <Ionicons name="folder-open-outline" size={44} color={THEME.colors.textMuted} />
+                  <Text style={styles.emptyTitle}>
+                    {lang === 'es' ? 'SIN EXPEDIENTES ENCONTRADOS' : 'NO DOSSIERS FOUND'}
+                  </Text>
+                  <Text style={styles.emptySub}>
+                    {search
+                      ? lang === 'es'
+                        ? 'No hay registros que coincidan con la búsqueda.'
+                        : 'No records match the current search.'
+                      : lang === 'es'
+                      ? 'No se encontraron expedientes en este módulo de la biblioteca.'
+                      : 'No dossiers located in this library archive module.'}
+                  </Text>
+                </View>
+              }
+            />
+          </>
         )}
       </View>
 
@@ -358,7 +424,33 @@ export default function LibraryScreen() {
           {selectedPath ? (
             <DossierView
               path={selectedPath}
-              category={activeCategory.key === 'objects' ? 'object' : activeCategory.key === 'phenomena' ? 'phenomenon' : 'archive'}
+              category={inferItemCategory(
+                selectedPath,
+                selectedPath,
+                activeCategory.key === 'objects'
+                  ? 'object'
+                  : activeCategory.key === 'phenomena'
+                  ? 'phenomenon'
+                  : activeCategory.key === 'groups'
+                  ? 'group'
+                  : activeCategory.key === 'tales'
+                  ? 'tale'
+                  : activeCategory.key === 'poi'
+                  ? 'poi'
+                  : activeCategory.key === 'canons'
+                  ? 'canon'
+                  : activeCategory.key === 'subclusters'
+                  ? 'subcluster'
+                  : activeCategory.key === 'jokes'
+                  ? 'joke'
+                  : activeCategory.key === 'enigmatic_levels'
+                  ? 'level'
+                  : activeCategory.key === 'enigmatic_entities'
+                  ? 'entity'
+                  : activeCategory.key === 'art_gallery'
+                  ? 'art'
+                  : undefined
+              )}
             />
           ) : (
             <View style={styles.centerContainer}>
@@ -510,5 +602,70 @@ const styles = StyleSheet.create({
     color: THEME.colors.textMuted,
     letterSpacing: 1,
     textAlign: 'center',
+  },
+  errorTitle: {
+    marginTop: 12,
+    fontFamily: THEME.fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    color: THEME.colors.accentRed,
+    letterSpacing: 1,
+  },
+  errorSub: {
+    marginTop: 6,
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    color: THEME.colors.textSecondary,
+    textAlign: 'center',
+    maxWidth: 280,
+    lineHeight: 16,
+  },
+  retryButton: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: THEME.colors.accentRed,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: THEME.radius.md,
+    gap: 8,
+  },
+  retryButtonText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    fontWeight: '700',
+    color: THEME.colors.textPrimary,
+    letterSpacing: 0.5,
+  },
+  inlineErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(239, 68, 68, 0.3)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  inlineErrorText: {
+    flex: 1,
+    fontFamily: THEME.fonts.mono,
+    fontSize: 10,
+    color: THEME.colors.accentRed,
+  },
+  inlineRetryBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  inlineRetryText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9,
+    fontWeight: '700',
+    color: THEME.colors.accentRed,
+    letterSpacing: 0.5,
   },
 });

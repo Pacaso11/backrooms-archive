@@ -22,6 +22,7 @@ import { LanguageToggle } from '../../components/LanguageToggle';
 import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { useLanguage } from '../../context/LanguageContext';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -30,13 +31,13 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export default function EntitiesScreen() {
   const router = useRouter();
   const { isSplitView, masterWidth } = useResponsiveLayout();
+  const { language: lang, setLanguage } = useLanguage();
 
   const [entities, setEntities] = useState<WikiListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedPath, setSelectedPath] = useState<string>('/entity-1');
-  const [lang, setLang] = useState<'es' | 'en'>('es');
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
@@ -47,10 +48,9 @@ export default function EntitiesScreen() {
     setIsPanelExpanded(prev => !prev);
   }, []);
 
-  const loadEntities = async (targetLang?: 'es' | 'en', forceRefresh = false) => {
+  const loadEntities = useCallback(async (targetLang?: 'es' | 'en', forceRefresh = false) => {
     try {
-      const currentLang = targetLang || (await StorageService.getLanguage());
-      setLang(currentLang);
+      const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
         const cached = await StorageService.getCachedIndex('entities');
@@ -69,7 +69,7 @@ export default function EntitiesScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [lang]);
 
   const loadReadState = async () => {
     const ids = await StorageService.getReadIds();
@@ -83,14 +83,13 @@ export default function EntitiesScreen() {
   );
 
   useEffect(() => {
-    loadEntities();
-  }, []);
+    loadEntities(lang);
+  }, [lang, loadEntities]);
 
   const handleLanguageChange = async (newLang: 'es' | 'en') => {
-    setLang(newLang);
-    await StorageService.setLanguage(newLang);
     setLoading(true);
-    loadEntities(newLang, true);
+    await setLanguage(newLang);
+    await loadEntities(newLang, true);
   };
 
   const onRefresh = () => {

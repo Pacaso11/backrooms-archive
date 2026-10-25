@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BackroomsItem, LastReadSession, ReaderSettings, WikiListItem } from '../types/wikidot';
 
-const KEYS = {
+export const KEYS = {
   FAVORITES: '@backrooms_favorites_v1',
   CACHED_ITEMS: '@backrooms_cached_items_v5',
   HISTORY: '@backrooms_history_v1',
@@ -19,6 +19,24 @@ const DEFAULT_READER_SETTINGS: ReaderSettings = {
 };
 
 export class StorageService {
+  static readonly KEYS = KEYS;
+
+  private static sanitizeId(id: string): string {
+    if (!id) return '';
+    return id
+      .replace(/^[\/\\]+/, '')
+      .replace(/[-_](?:es|en)?[-_]?v5_canonical.*$/i, '')
+      .replace(/[\/\\]+$/, '');
+  }
+
+  private static sanitizePath(path?: string, fallbackId?: string): string {
+    const raw = path || (fallbackId ? `/${fallbackId}` : '');
+    if (!raw) return '';
+    const cleaned = raw
+      .replace(/[-_](?:es|en)?[-_]?v5_canonical.*$/i, '')
+      .replace(/[\/\\]+$/, '');
+    return cleaned.startsWith('/') ? cleaned : `/${cleaned}`;
+  }
   // --- Language ---
   static async getLanguage(): Promise<'es' | 'en'> {
     try {
@@ -41,7 +59,17 @@ export class StorageService {
   static async getLastReadSession(): Promise<LastReadSession | null> {
     try {
       const data = await AsyncStorage.getItem(KEYS.LAST_READ);
-      return data ? JSON.parse(data) : null;
+      if (!data) return null;
+      const session: LastReadSession = JSON.parse(data);
+      const cleanId = this.sanitizeId(session.id);
+      const cleanPath = this.sanitizePath(session.path, cleanId);
+
+      if (session.id !== cleanId || session.path !== cleanPath) {
+        session.id = cleanId;
+        session.path = cleanPath;
+        await AsyncStorage.setItem(KEYS.LAST_READ, JSON.stringify(session));
+      }
+      return session;
     } catch {
       return null;
     }
@@ -49,7 +77,14 @@ export class StorageService {
 
   static async saveLastReadSession(session: LastReadSession): Promise<void> {
     try {
-      await AsyncStorage.setItem(KEYS.LAST_READ, JSON.stringify(session));
+      const cleanId = this.sanitizeId(session.id);
+      const cleanPath = this.sanitizePath(session.path, cleanId);
+      const sanitizedSession: LastReadSession = {
+        ...session,
+        id: cleanId,
+        path: cleanPath,
+      };
+      await AsyncStorage.setItem(KEYS.LAST_READ, JSON.stringify(sanitizedSession));
     } catch (err) {
       console.warn('Could not save last read session:', err);
     }
@@ -59,7 +94,24 @@ export class StorageService {
   static async getReadIds(): Promise<string[]> {
     try {
       const data = await AsyncStorage.getItem(KEYS.READ_ITEMS);
-      return data ? JSON.parse(data) : [];
+      if (!data) return [];
+      const reads: string[] = JSON.parse(data);
+      let mutated = false;
+      const sanitized = Array.from(
+        new Set(
+          reads
+            .map(r => {
+              const clean = this.sanitizeId(r);
+              if (clean !== r) mutated = true;
+              return clean;
+            })
+            .filter(Boolean)
+        )
+      );
+      if (mutated) {
+        await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(sanitized));
+      }
+      return sanitized;
     } catch {
       return [];
     }
@@ -67,8 +119,9 @@ export class StorageService {
 
   static async isRead(id: string): Promise<boolean> {
     try {
+      const cleanId = this.sanitizeId(id);
       const reads = await this.getReadIds();
-      return reads.includes(id);
+      return reads.includes(cleanId);
     } catch {
       return false;
     }
@@ -76,9 +129,10 @@ export class StorageService {
 
   static async markAsRead(id: string): Promise<void> {
     try {
+      const cleanId = this.sanitizeId(id);
       const reads = await this.getReadIds();
-      if (!reads.includes(id)) {
-        reads.push(id);
+      if (!reads.includes(cleanId)) {
+        reads.push(cleanId);
         await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
       }
     } catch (err) {
@@ -88,8 +142,9 @@ export class StorageService {
 
   static async unmarkAsRead(id: string): Promise<void> {
     try {
+      const cleanId = this.sanitizeId(id);
       let reads = await this.getReadIds();
-      reads = reads.filter(r => r !== id);
+      reads = reads.filter(r => r !== cleanId);
       await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
     } catch (err) {
       console.warn('Could not unmark as read:', err);
@@ -98,13 +153,14 @@ export class StorageService {
 
   static async toggleRead(id: string): Promise<boolean> {
     try {
+      const cleanId = this.sanitizeId(id);
       const reads = await this.getReadIds();
-      const exists = reads.includes(id);
+      const exists = reads.includes(cleanId);
       let updated: string[];
       if (exists) {
-        updated = reads.filter(r => r !== id);
+        updated = reads.filter(r => r !== cleanId);
       } else {
-        updated = [...reads, id];
+        updated = [...reads, cleanId];
       }
       await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(updated));
       return !exists;
@@ -136,27 +192,46 @@ export class StorageService {
   static async getFavorites(): Promise<string[]> {
     try {
       const data = await AsyncStorage.getItem(KEYS.FAVORITES);
-      return data ? JSON.parse(data) : [];
+      if (!data) return [];
+      const favs: string[] = JSON.parse(data);
+      let mutated = false;
+      const sanitized = Array.from(
+        new Set(
+          favs
+            .map(f => {
+              const clean = this.sanitizeId(f);
+              if (clean !== f) mutated = true;
+              return clean;
+            })
+            .filter(Boolean)
+        )
+      );
+      if (mutated) {
+        await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(sanitized));
+      }
+      return sanitized;
     } catch {
       return [];
     }
   }
 
   static async isFavorite(id: string): Promise<boolean> {
+    const cleanId = this.sanitizeId(id);
     const favs = await this.getFavorites();
-    return favs.includes(id);
+    return favs.includes(cleanId);
   }
 
   static async toggleFavorite(id: string): Promise<boolean> {
     try {
+      const cleanId = this.sanitizeId(id);
       const favs = await this.getFavorites();
       let updated: string[];
       let isNowFav = false;
 
-      if (favs.includes(id)) {
-        updated = favs.filter(f => f !== id);
+      if (favs.includes(cleanId)) {
+        updated = favs.filter(f => f !== cleanId);
       } else {
-        updated = [...favs, id];
+        updated = [...favs, cleanId];
         isNowFav = true;
       }
 
@@ -167,21 +242,71 @@ export class StorageService {
     }
   }
 
-  // --- Item Dossier Cache (Full offline storage) ---
-  static async getCachedItem(id: string): Promise<BackroomsItem | null> {
+  // --- Item Dossier Cache (Full offline storage with decoupled cache keys) ---
+  static buildItemCacheKey(cleanId: string, lang: 'es' | 'en' = 'es'): string {
+    const sanitizedId = this.sanitizeId(cleanId);
+    return `${KEYS.CACHED_ITEMS}_${sanitizedId}_${lang}`;
+  }
+
+  static async getCachedItem(id: string, lang: 'es' | 'en' = 'es'): Promise<BackroomsItem | null> {
     try {
-      const key = `${KEYS.CACHED_ITEMS}_${id}`;
-      const data = await AsyncStorage.getItem(key);
-      return data ? JSON.parse(data) : null;
+      const cleanId = this.sanitizeId(id);
+      const primaryKey = this.buildItemCacheKey(cleanId, lang);
+      let data = await AsyncStorage.getItem(primaryKey);
+
+      if (!data) {
+        // Fallback to legacy keys if present
+        const legacyCandidates = [
+          `${KEYS.CACHED_ITEMS}_${cleanId}_${lang}_v5_canonical`,
+          `${KEYS.CACHED_ITEMS}_${cleanId}_v5_canonical`,
+          `${KEYS.CACHED_ITEMS}_${id}`,
+          `${KEYS.CACHED_ITEMS}_${cleanId}`,
+        ];
+        for (const candidate of legacyCandidates) {
+          data = await AsyncStorage.getItem(candidate);
+          if (data) break;
+        }
+        if (data) {
+          // Auto-heal legacy cache entry into the decoupled primary key
+          try {
+            const parsed = JSON.parse(data);
+            const healedItem: BackroomsItem = {
+              ...parsed,
+              id: cleanId,
+              path: this.sanitizePath(parsed.path, cleanId),
+              lang: lang || parsed.lang || 'es',
+            };
+            await AsyncStorage.setItem(primaryKey, JSON.stringify(healedItem));
+          } catch {
+            // Ignore parse/heal error
+          }
+        }
+      }
+
+      if (!data) return null;
+      const item: BackroomsItem = JSON.parse(data);
+      item.id = cleanId;
+      item.path = `/${cleanId}`;
+      return item;
     } catch {
       return null;
     }
   }
 
-  static async saveItemToCache(item: BackroomsItem): Promise<void> {
+  static async saveItemToCache(item: BackroomsItem, lang: 'es' | 'en' = 'es'): Promise<void> {
     try {
-      const key = `${KEYS.CACHED_ITEMS}_${item.id}`;
-      await AsyncStorage.setItem(key, JSON.stringify(item));
+      const cleanId = this.sanitizeId(item.id);
+      const cleanPath = this.sanitizePath(item.path, cleanId);
+      const targetLang = lang || (item.lang === 'en' ? 'en' : 'es');
+      const key = this.buildItemCacheKey(cleanId, targetLang);
+      const sanitizedItem: BackroomsItem = {
+        ...item,
+        id: cleanId,
+        path: cleanPath,
+        lang: targetLang,
+        cachedAt: Date.now(),
+      };
+      await AsyncStorage.setItem(key, JSON.stringify(sanitizedItem));
     } catch (err) {
       console.warn('Could not cache item:', err);
     }

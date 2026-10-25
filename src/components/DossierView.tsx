@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -40,6 +40,7 @@ export function DossierView({
 }: DossierViewProps) {
   const router = useRouter();
   const scrollViewRef = useRef<ScrollView>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [item, setItem] = useState<BackroomsItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,75 +56,111 @@ export function DossierView({
   });
   const [selectedTabIndex, setSelectedTabIndex] = useState<number>(0);
   const [expandedAccordions, setExpandedAccordions] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    setSelectedTabIndex(0);
-    setExpandedAccordions({});
-  }, [path]);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Scroll memory
   const initialScrollRestored = useRef(false);
 
-  const loadData = async (targetLang?: 'es' | 'en', forceRefresh = false) => {
-    if (forceRefresh) {
-      setRefreshing(true);
-    } else {
-      setLoading(true);
-    }
-    setError(null);
-    initialScrollRestored.current = false;
+  // Cleanup pending network request on unmount
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
-    try {
-      const currentLang = targetLang || (await StorageService.getLanguage());
-      setLang(currentLang);
+  const loadData = useCallback(
+    async (targetLang?: 'es' | 'en', forceRefresh = false) => {
+      // 1. Abort prior in-flight request and create new controller
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
 
-      // Load reader settings
-      const settings = await StorageService.getReaderSettings();
-      setReaderSettings(settings);
+      // 2. On navigation / path change: immediately reset state & scroll
+      if (forceRefresh) {
+        setRefreshing(true);
+      } else {
+        setItem(null);
+        setLoading(true);
+        setError(null);
+        setSelectedTabIndex(0);
+        setExpandedAccordions({});
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+      }
+      setError(null);
+      initialScrollRestored.current = false;
 
-      const cleanId = path.replace(/\//g, '');
-      const CACHE_SALT = 'v5_canonical';
-      const cacheKey = `${cleanId}_${currentLang}_${CACHE_SALT}`;
+      let hasLocalData = false;
 
-      // 1. Check local offline cache first (if not forcing fresh download)
-      if (!forceRefresh) {
-        const cached = await StorageService.getCachedItem(cacheKey);
-        if (cached) {
-          setItem(cached);
+      try {
+        const currentLang = targetLang || (await StorageService.getLanguage());
+        if (abortController.signal.aborted) return;
+        setLang(currentLang);
+
+        // Load reader settings
+        const settings = await StorageService.getReaderSettings();
+        if (abortController.signal.aborted) return;
+        setReaderSettings(settings);
+
+        const cleanId = path.replace(/\//g, '');
+
+        // 1. Check local offline cache first (if not forcing fresh download)
+        if (!forceRefresh) {
+          const cached = await StorageService.getCachedItem(cleanId, currentLang);
+          if (abortController.signal.aborted) return;
+          if (cached) {
+            hasLocalData = true;
+            setItem(cached);
+            setLoading(false);
+          }
+        }
+
+        // 2. Check favorite and read status
+        const fav = await StorageService.isFavorite(cleanId);
+        if (abortController.signal.aborted) return;
+        setIsFavorite(fav);
+
+        const readState = await StorageService.isRead(cleanId);
+        if (abortController.signal.aborted) return;
+        if (!readState) {
+          await StorageService.markAsRead(cleanId);
+          setIsRead(true);
+        } else {
+          setIsRead(true);
+        }
+
+        // 3. Fetch latest from Wikidot with abort signal
+        const fetched = await WikidotService.fetchItemDetails(
+          path,
+          category,
+          currentLang,
+          abortController.signal
+        );
+        if (abortController.signal.aborted) return;
+        setItem(fetched);
+
+        // Save to cache for offline reading (never mutate fetched.id)
+        await StorageService.saveItemToCache(fetched, currentLang);
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || err?.message?.includes('aborted') || abortController.signal.aborted) {
+          // Silently catch and ignore AbortError
+          return;
+        }
+        console.warn('Dossier loading error:', err);
+        if (!hasLocalData) {
+          setError(err?.message || 'Error connecting to Wikidot');
+        }
+      } finally {
+        if (!abortController.signal.aborted) {
           setLoading(false);
+          setRefreshing(false);
         }
       }
-
-      // 2. Check favorite and read status
-      const fav = await StorageService.isFavorite(cleanId);
-      setIsFavorite(fav);
-
-      const readState = await StorageService.isRead(cleanId);
-      if (!readState) {
-        await StorageService.markAsRead(cleanId);
-        setIsRead(true);
-      } else {
-        setIsRead(true);
-      }
-
-      // 3. Fetch latest from Wikidot
-      const fetched = await WikidotService.fetchItemDetails(path, category, currentLang);
-      setItem(fetched);
-
-      // Save to cache for offline reading
-      await StorageService.saveItemToCache({ ...fetched, id: cacheKey });
-    } catch (err: any) {
-      console.warn('Dossier loading error:', err);
-      if (!item) {
-        setError(err.message || 'Error connecting to Wikidot');
-      }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+    },
+    [path, category]
+  );
 
   const handleToggleRead = async () => {
     if (!item) return;
@@ -134,7 +171,7 @@ export function DossierView({
 
   useEffect(() => {
     loadData();
-  }, [path]);
+  }, [loadData]);
 
   // Restore scroll position when item finishes loading
   useEffect(() => {

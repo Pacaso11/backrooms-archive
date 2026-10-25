@@ -3,56 +3,32 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SurvivalClassification } from '../types/wikidot';
 import { THEME } from '../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+import {
+  TRAIT_TRANSLATIONS,
+  DEFAULT_TRAITS_BY_CLASS,
+  translateTrait,
+  getSurvivalDifficultyFallback,
+} from '../services/wikidotService';
 
 interface SurvivalBadgeProps {
   classification?: SurvivalClassification;
   lang?: 'es' | 'en';
 }
 
-const TRAIT_TRANSLATIONS: Record<string, string> = {
-  'safe': 'Seguro',
-  'secure': 'Asegurado',
-  'unsafe': 'Inseguro',
-  'unsecure': 'Desasegurado',
-  'devoid of entities': 'Desprovisto de Entidades',
-  'minimal entity count': 'Presencia Mínima de Entidades',
-  'low entity count': 'Baja Presencia de Entidades',
-  'medium entity count': 'Presencia Moderada de Entidades',
-  'high entity count': 'Alta Presencia de Entidades',
-  'infested with entities': 'Infestado de Entidades',
-  'entity infestation': 'Infestación de Entidades',
-  'undetermined': 'Indeterminado',
-  'environmental hazards': 'Peligros Ambientales',
-  'psychological hazards': 'Peligros Psicológicos',
-  'biological hazards': 'Peligros Biológicos',
-  'anomalous properties': 'Propiedades Anómalas',
+export {
+  TRAIT_TRANSLATIONS,
+  DEFAULT_TRAITS_BY_CLASS,
+  translateTrait,
+  getSurvivalDifficultyFallback,
 };
 
 const isPlaceholder = (t?: string) => !t || /^\{?\$[a-zA-Z0-9_-]+\}?$/.test(t.trim());
-
-const DEFAULT_TRAITS_BY_CLASS: Record<string, { safety: string; security: string; entityCount: string }> = {
-  '0': { safety: 'Safe', security: 'Secure', entityCount: 'Devoid of Entities' },
-  '1': { safety: 'Safe', security: 'Secure', entityCount: 'Minimal Entity Count' },
-  '2': { safety: 'Unsafe', security: 'Secure', entityCount: 'Low Entity Count' },
-  '3': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Medium Entity Count' },
-  '4': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'High Entity Count' },
-  '5': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Entity Infestation' },
-  'habitable': { safety: 'Safe', security: 'Secure', entityCount: 'Devoid of Entities' },
-  'deadzone': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Entity Infestation' },
-};
-
-function translateTrait(trait: string, lang: 'es' | 'en'): string {
-  if (lang !== 'es' || !trait) return trait;
-  const lower = trait.trim().toLowerCase();
-  if (TRAIT_TRANSLATIONS[lower]) return TRAIT_TRANSLATIONS[lower];
-  return trait;
-}
 
 export function SurvivalBadge({ classification, lang = 'es' }: SurvivalBadgeProps) {
   if (!classification) return null;
 
   const color = classification.color || '#94a3b8';
-  let label = classification.badgeText || `CLASS ${classification.classLevel.toUpperCase()}`;
+  let label = classification.badgeText || (classification.classLevel ? `CLASS ${classification.classLevel.toUpperCase()}` : (lang === 'es' ? 'CLASE INDETERMINADA' : 'UNDETERMINED CLASS'));
   if (lang === 'es') {
     label = label
       .replace(/\bCLASS\b/i, 'CLASE')
@@ -61,11 +37,7 @@ export function SurvivalBadge({ classification, lang = 'es' }: SurvivalBadgeProp
       .replace(/\bPENDING\b/i, 'PENDIENTE');
   }
 
-  const fallback = DEFAULT_TRAITS_BY_CLASS[classification.classLevel] || {
-    safety: 'Safe',
-    security: 'Secure',
-    entityCount: 'Minimal Entity Count',
-  };
+  const fallback = getSurvivalDifficultyFallback(classification.classLevel, lang);
 
   const safety = !isPlaceholder(classification.safety) ? classification.safety : fallback.safety;
   const security = !isPlaceholder(classification.security) ? classification.security : fallback.security;

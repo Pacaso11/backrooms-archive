@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { StorageService } from '../../services/storageService';
 import { DossierView } from '../../components/DossierView';
 import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { WikiListItem } from '../../types/wikidot';
+import { LIBRARY_CATEGORIES, inferItemCategory } from '../../services/wikidotService';
 
 type TabView = 'saved' | 'history';
 
@@ -20,37 +21,51 @@ export default function FavoritesScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [itemMap, setItemMap] = useState<Map<string, WikiListItem>>(new Map());
 
-  const loadData = async () => {
-    const [favs, reads, levels, entities] = await Promise.all([
-      StorageService.getFavorites(),
-      StorageService.getReadIds(),
-      StorageService.getCachedIndex('levels'),
-      StorageService.getCachedIndex('entities'),
-    ]);
+  const loadData = useCallback(async () => {
+    try {
+      const libraryPromises = LIBRARY_CATEGORIES.map(cat => StorageService.getCachedIndex(cat.key));
+      const [favs, reads, levels, entities, ...libraryLists] = await Promise.all([
+        StorageService.getFavorites(),
+        StorageService.getReadIds(),
+        StorageService.getCachedIndex('levels'),
+        StorageService.getCachedIndex('entities'),
+        ...libraryPromises,
+      ]);
 
-    setFavorites(favs);
-    setHistoryIds([...reads].reverse()); // prevent mutating original array
+      setFavorites(favs);
+      setHistoryIds([...reads].reverse()); // prevent mutating original array
 
-    const map = new Map<string, WikiListItem>();
-    if (levels) levels.forEach(l => map.set(l.id, l));
-    if (entities) entities.forEach(e => map.set(e.id, e));
-    setItemMap(map);
+      const map = new Map<string, WikiListItem>();
+      if (levels) levels.forEach(l => map.set(l.id, l));
+      if (entities) entities.forEach(e => map.set(e.id, e));
+      libraryLists.forEach(list => {
+        if (list) {
+          list.forEach(item => map.set(item.id, item));
+        }
+      });
+      setItemMap(map);
 
-    const list = activeTab === 'saved' ? favs : reads;
-    if (list.length > 0 && !selectedId) {
-      setSelectedId(list[0]);
+      const list = activeTab === 'saved' ? favs : reads;
+      if (list.length > 0 && !selectedId) {
+        setSelectedId(list[0]);
+      }
+    } catch (err) {
+      console.warn('Error loading favorites and history:', err);
     }
-  };
+  }, [activeTab, selectedId]);
 
-  useEffect(() => {
-    loadData();
-  }, [activeTab]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
 
   const handleOpenItem = (id: string) => {
     setSelectedId(id);
     if (!isSplitView) {
-      const isEntity = id.startsWith('entity');
-      router.push(`/dossier/${id}${isEntity ? '?category=entity' : ''}`);
+      const itemInfo = itemMap.get(id);
+      const inferredCat = inferItemCategory(id, itemInfo?.path, itemInfo?.category);
+      router.push(`/dossier/${id}?category=${inferredCat}`);
     }
   };
 
@@ -123,12 +138,46 @@ export default function FavoritesScreen() {
             keyExtractor={item => item}
             renderItem={({ item }) => {
               const info = itemMap.get(item);
-              const isEntity = item.startsWith('entity');
-              const title = info ? info.title : (isEntity ? item.replace('entity-', 'Entidad ') : item.replace('level-', 'Nivel '));
+              const inferredCat = inferItemCategory(item, info?.path, info?.category);
+              let title = info ? info.title : undefined;
+              if (!title) {
+                if (inferredCat === 'entity') {
+                  title = item.replace(/^(?:entity|entidad)-/i, 'Entidad ');
+                } else if (inferredCat === 'level') {
+                  title = item.replace(/^(?:level|nivel)-/i, 'Nivel ');
+                } else if (inferredCat === 'object') {
+                  title = item.replace(/^(?:object|objeto)-/i, 'Objeto ');
+                } else if (inferredCat === 'phenomenon') {
+                  title = item.replace(/^(?:phenomenon|fenomeno)-/i, 'Fenómeno ');
+                } else if (inferredCat === 'tale') {
+                  title = item.replace(/^(?:tale|relato)-/i, 'Relato: ');
+                } else if (inferredCat === 'group') {
+                  title = item.replace(/^(?:group|grupo)-/i, 'Grupo: ');
+                } else if (inferredCat === 'poi') {
+                  title = item.replace(/^(?:poi|pdi)-/i, 'PDI: ');
+                } else if (inferredCat === 'canon') {
+                  title = item.replace(/-canon(?:-hub)?$/i, '').replace(/-/g, ' ');
+                } else {
+                  title = item.replace(/-/g, ' ');
+                }
+              }
+
               const rawSub = info?.subTitle ? info.subTitle.replace(/^["'«»“”„\s\-–—]+|["'«»“”„\s\-–—]+$/g, '').trim() : '';
-              const badgeCode = isEntity
-                ? `ENT-${info?.numberStr || item.replace('entity-', '')}`
-                : `LVL-${info?.numberStr || item.replace('level-', '')}`;
+
+              let badgePrefix = 'EXP';
+              if (inferredCat === 'entity') badgePrefix = 'ENT';
+              else if (inferredCat === 'level') badgePrefix = 'LVL';
+              else if (inferredCat === 'object') badgePrefix = 'OBJ';
+              else if (inferredCat === 'phenomenon') badgePrefix = 'FEN';
+              else if (inferredCat === 'tale') badgePrefix = 'REL';
+              else if (inferredCat === 'group') badgePrefix = 'GRP';
+              else if (inferredCat === 'poi') badgePrefix = 'PDI';
+              else if (inferredCat === 'canon') badgePrefix = 'CANON';
+              else if (inferredCat === 'joke') badgePrefix = 'BROMA';
+              else if (inferredCat === 'subcluster') badgePrefix = 'SERIE';
+
+              const rawNum = info?.numberStr || item.replace(/^(?:level|nivel|entity|entidad|object|objeto|phenomenon|fenomeno)-/i, '');
+              const badgeCode = `${badgePrefix}-${rawNum}`;
 
               return (
                 <Pressable
@@ -185,7 +234,7 @@ export default function FavoritesScreen() {
           {selectedId ? (
             <DossierView
               path={`/${selectedId}`}
-              category={selectedId.startsWith('entity') ? 'entity' : 'level'}
+              category={selectedId ? inferItemCategory(selectedId, itemMap.get(selectedId)?.path, itemMap.get(selectedId)?.category) : 'level'}
             />
           ) : (
             <View style={styles.selectPrompt}>

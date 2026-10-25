@@ -19,34 +19,28 @@ function LevelCardComponent({
   onPress,
   onToggleRead,
 }: LevelCardProps) {
-  // Determine danger stripe and class badge
-  const num = parseFloat(item.numberStr);
-  let stripeColor = '#f59e0b'; // default amber
-  let classLabel = 'CLASE 1';
+  // Only display genuine classification if present (no fabricated Math.floor(num) classes)
+  const genuineClass = item.previewClass?.trim();
+  let stripeColor = THEME.colors.accentAmber;
 
-  if (!isNaN(num)) {
-    if (num === 0 || item.numberStr === '0') {
-      stripeColor = '#10b981';
-      classLabel = 'CLASE 0';
-    } else if (num === 1) {
-      stripeColor = '#06b6d4';
-      classLabel = 'CLASE 1';
-    } else if (num === 2 || num === 3) {
-      stripeColor = '#f59e0b';
-      classLabel = `CLASE ${Math.floor(num)}`;
-    } else if (num >= 4) {
-      stripeColor = '#ef4444';
-      classLabel = `CLASE ${Math.floor(num)}`;
+  if (genuineClass) {
+    const lower = genuineClass.toLowerCase();
+    if (lower.includes('0') || lower.includes('habitable') || lower.includes('seguro') || lower.includes('safe')) {
+      stripeColor = THEME.colors.accentGreen;
+    } else if (lower.includes('1')) {
+      stripeColor = THEME.colors.accentCyan;
+    } else if (lower.includes('2') || lower.includes('3')) {
+      stripeColor = THEME.colors.accentAmber;
+    } else if (lower.includes('4') || lower.includes('5') || lower.includes('deadzone') || lower.includes('peligro') || lower.includes('hazard')) {
+      stripeColor = THEME.colors.accentRed;
+    } else {
+      stripeColor = '#a855f7';
     }
-  } else {
-    stripeColor = '#a855f7';
-    classLabel = 'ENIGMA';
   }
 
   const tags = item.tags || [
     item.numberStr.includes('.') ? 'Subnivel' : 'Nivel',
     'M.E.G.',
-    classLabel,
   ];
 
   const cleanSub = item.subTitle
@@ -73,9 +67,11 @@ function LevelCardComponent({
             <View style={styles.codeBadge}>
               <Text style={styles.codeBadgeText}>LVL-{item.numberStr}</Text>
             </View>
-            <View style={[styles.classBadge, { borderColor: `${stripeColor}55`, backgroundColor: `${stripeColor}15` }]}>
-              <Text style={[styles.classBadgeText, { color: stripeColor }]}>{classLabel}</Text>
-            </View>
+            {genuineClass ? (
+              <View style={[styles.classBadge, { borderColor: `${stripeColor}55`, backgroundColor: `${stripeColor}15` }]}>
+                <Text style={[styles.classBadgeText, { color: stripeColor }]}>{genuineClass}</Text>
+              </View>
+            ) : null}
             {item.lang === 'es' && (
               <View style={styles.langBadge}>
                 <Text style={styles.langBadgeText}>ES</Text>

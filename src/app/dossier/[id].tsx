@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { DossierView } from '../../components/DossierView';
 import { THEME } from '../../constants/theme';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { inferItemCategory } from '../../services/wikidotService';
 
 export default function DossierScreen() {
   const router = useRouter();
@@ -16,7 +17,7 @@ export default function DossierScreen() {
       <View style={styles.container}>
         <DossierView
           path={`/${id}`}
-          category={(category as any) || (id.startsWith('entity') ? 'entity' : id.startsWith('object') ? 'object' : id.startsWith('phenomenon') ? 'phenomenon' : 'canon')}
+          category={inferItemCategory(id, undefined, category)}
           showBackButton
           onBack={() => router.back()}
         />

@@ -3,9 +3,11 @@ import { Tabs } from 'expo-router';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { isEs } = useLanguage();
   // Dynamically calculate bottom padding to elevate above Android 3-button navigation bar / gesture bar
   const bottomPadding = insets.bottom > 0 ? insets.bottom + 2 : 8;
   const tabHeight = 54 + bottomPadding;
@@ -44,8 +46,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'LEVELS',
-          headerTitle: 'M.E.G. // LEVEL DATABASE',
+          title: isEs ? 'NIVELES' : 'LEVELS',
+          headerTitle: isEs ? 'M.E.G. // BASE DE DATOS DE NIVELES' : 'M.E.G. // LEVEL DATABASE',
           tabBarIcon: ({ color, size }) => (
             <Ionicons
               name="layers-outline"
@@ -58,8 +60,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="entities"
         options={{
-          title: 'ENTITIES',
-          headerTitle: 'M.E.G. // ENTITY BESTIARY',
+          title: isEs ? 'ENTIDADES' : 'ENTITIES',
+          headerTitle: isEs ? 'M.E.G. // BESTIARIO DE ENTIDADES' : 'M.E.G. // ENTITY BESTIARY',
           tabBarIcon: ({ color, size }) => (
             <Ionicons
               name="skull-outline"
@@ -72,8 +74,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="library"
         options={{
-          title: 'BIBLIOTECA',
-          headerTitle: 'M.E.G. // ARCHIVO & BIBLIOTECA',
+          title: isEs ? 'BIBLIOTECA' : 'LIBRARY',
+          headerTitle: isEs ? 'M.E.G. // ARCHIVO & BIBLIOTECA' : 'M.E.G. // ARCHIVE & LIBRARY',
           tabBarIcon: ({ color, size }) => (
             <Ionicons
               name="library-outline"
@@ -86,8 +88,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="favorites"
         options={{
-          title: 'SAVED',
-          headerTitle: 'M.E.G. // OFFLINE DOSSIERS',
+          title: isEs ? 'GUARDADOS' : 'SAVED',
+          headerTitle: isEs ? 'M.E.G. // EXPEDIENTES OFFLINE' : 'M.E.G. // OFFLINE DOSSIERS',
           tabBarIcon: ({ color, size }) => (
             <Ionicons
               name="bookmark-outline"

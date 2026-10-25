@@ -19,29 +19,23 @@ function EntityCardComponent({
   onPress,
   onToggleRead,
 }: EntityCardProps) {
-  const num = parseInt(item.numberStr, 10);
-  let stripeColor = '#ef4444'; // default red
-  let typeLabel = 'HOSTIL';
+  // Only display genuine classification if present (no fabricated danger types)
+  const genuineClass = item.previewClass?.trim();
+  let stripeColor = THEME.colors.accentRed;
 
-  if (!isNaN(num)) {
-    if (num === 4 || num === 6 || num === 7) {
-      stripeColor = '#10b981';
-      typeLabel = 'PASIVO';
-    } else if (num === 1 || num === 2 || num === 5) {
-      stripeColor = '#f59e0b';
-      typeLabel = 'ANÓMALO';
+  if (genuineClass) {
+    const lower = genuineClass.toLowerCase();
+    if (lower.includes('pasivo') || lower.includes('passive') || lower.includes('neutral') || lower.includes('safe') || lower.includes('seguro')) {
+      stripeColor = THEME.colors.accentGreen;
+    } else if (lower.includes('anómalo') || lower.includes('anomalous') || lower.includes('variable')) {
+      stripeColor = THEME.colors.accentAmber;
     } else {
-      stripeColor = '#ef4444';
-      typeLabel = 'PELIGROSO';
+      stripeColor = THEME.colors.accentRed;
     }
-  } else {
-    stripeColor = '#ec4899';
-    typeLabel = 'NO IDENTIFICADO';
   }
 
   const tags = item.tags || [
     'Entidad',
-    typeLabel,
     'M.E.G. Log',
   ];
 
@@ -69,9 +63,11 @@ function EntityCardComponent({
             <View style={styles.codeBadge}>
               <Text style={styles.codeBadgeText}>ENT-{item.numberStr}</Text>
             </View>
-            <View style={[styles.typeBadge, { borderColor: `${stripeColor}55`, backgroundColor: `${stripeColor}15` }]}>
-              <Text style={[styles.typeBadgeText, { color: stripeColor }]}>{typeLabel}</Text>
-            </View>
+            {genuineClass ? (
+              <View style={[styles.typeBadge, { borderColor: `${stripeColor}55`, backgroundColor: `${stripeColor}15` }]}>
+                <Text style={[styles.typeBadgeText, { color: stripeColor }]}>{genuineClass}</Text>
+              </View>
+            ) : null}
             {item.lang === 'es' && (
               <View style={styles.langBadge}>
                 <Text style={styles.langBadgeText}>ES</Text>

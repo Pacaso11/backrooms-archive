@@ -13,7 +13,7 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     color: '#00E5FF',
     badge: 'OBJ',
     pathEn: '/objects',
-    pathEs: '/objetos',
+    pathEs: '/objects',
     description: 'Anomalous tools, supplies, and relics found across the levels.',
     descriptionEs: 'Herramientas anómalas, suministros y reliquias halladas en los niveles.',
   },
@@ -25,7 +25,7 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     color: '#A855F7',
     badge: 'FEN',
     pathEn: '/phenomena',
-    pathEs: '/fenomenos',
+    pathEs: '/phenomena',
     description: 'Bizarre reality distortions, spatial anomalies, and recurring events.',
     descriptionEs: 'Distorsiones de la realidad, anomalías espaciales y sucesos recurrentes.',
   },
@@ -37,7 +37,7 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     color: '#3B82F6',
     badge: 'GRP',
     pathEn: '/groups-list',
-    pathEs: '/grupos',
+    pathEs: '/groups-list',
     description: 'Factions, research syndicates, colonies, and hostile organizations.',
     descriptionEs: 'Facciones, sindicatos de investigación, colonias y organizaciones.',
   },
@@ -108,7 +108,7 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     icon: 'help-circle-outline',
     color: '#8B5CF6',
     badge: 'ENIG-LVL',
-    pathEn: '/enigmatic-levels',
+    pathEn: '/unnumbered-levels',
     pathEs: '/niveles-enigmaticos',
     description: 'Unnumbered levels defying standard dimensional indexing.',
     descriptionEs: 'Niveles no numerados que desafían la indexación dimensional estándar.',
@@ -120,7 +120,7 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     icon: 'eye-outline',
     color: '#D946EF',
     badge: 'ENIG-ENT',
-    pathEn: '/enigmatic-entities',
+    pathEn: '/unnumbered-entities',
     pathEs: '/enigmatic-entities',
     description: 'Unique, unclassified, and legendary entities of the threshold.',
     descriptionEs: 'Entidades únicas, inclasificables y legendarias del umbral.',
@@ -138,6 +138,254 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     descriptionEs: 'Representaciones visuales, esquemas y bocetos de supervivientes.',
   },
 ];
+
+/**
+ * Centralized Category Inference Engine
+ * Deterministically infers the ItemCategory for a Backrooms dossier.
+ * Maps: 'level' | 'entity' | 'object' | 'phenomenon' | 'tale' | 'group' | 'poi' | 'joke' | 'subcluster' | 'canon' | 'archive'
+ * Under no circumstances does this function default to 'canon'.
+ */
+export function inferItemCategory(id: string, path?: string, explicitCat?: string): ItemCategory {
+  const rawTarget = (path || id || '').toLowerCase().trim();
+  const cleanTarget = rawTarget.replace(/^\/+/, '');
+
+  // 1. If explicit category is provided, validate it.
+  // CRITICAL: Reject accidental 'canon' or 'level' defaults if the target is clearly a different category!
+  if (explicitCat) {
+    const normExplicit = explicitCat.toLowerCase().trim() as ItemCategory;
+
+    const isObviousOther =
+      cleanTarget.startsWith('entity-') ||
+      cleanTarget.startsWith('entity_') ||
+      cleanTarget.startsWith('entidad-') ||
+      cleanTarget.startsWith('entidad_') ||
+      cleanTarget.startsWith('object-') ||
+      cleanTarget.startsWith('object_') ||
+      cleanTarget.startsWith('objeto-') ||
+      cleanTarget.startsWith('objeto_') ||
+      cleanTarget.startsWith('phenomenon-') ||
+      cleanTarget.startsWith('phenomenon_') ||
+      cleanTarget.startsWith('fenomeno-') ||
+      cleanTarget.startsWith('fenomeno_') ||
+      cleanTarget.startsWith('tale-') ||
+      cleanTarget.startsWith('relato-') ||
+      cleanTarget.startsWith('group-') ||
+      cleanTarget.startsWith('grupo-') ||
+      cleanTarget.startsWith('poi-') ||
+      cleanTarget.startsWith('pdi-') ||
+      cleanTarget.startsWith('joke-') ||
+      cleanTarget.startsWith('broma-') ||
+      cleanTarget.startsWith('series-') ||
+      cleanTarget.startsWith('subcluster-');
+
+    if (normExplicit === 'canon') {
+      const isActualCanon =
+        cleanTarget.endsWith('-canon') ||
+        cleanTarget.endsWith('-canon-hub') ||
+        cleanTarget.includes('canon-hub') ||
+        cleanTarget === 'canons' ||
+        cleanTarget === 'black-knights' ||
+        cleanTarget === 'decay-canon-hub' ||
+        cleanTarget === 'desolation-canon-hub' ||
+        cleanTarget === 'industrialization-canon-hub' ||
+        cleanTarget === 'broken-city' ||
+        cleanTarget === 'the-council' ||
+        cleanTarget === 'pantheon-hub' ||
+        cleanTarget === 'terror-hotel' ||
+        cleanTarget === 'canonicon2024' ||
+        cleanTarget === 'dianic-saga' ||
+        cleanTarget === 'hub-de-los-caballeros-negros';
+      if (isActualCanon) {
+        return 'canon';
+      }
+      // Otherwise ignore the bogus 'canon' explicitCat and infer from target
+    } else if (normExplicit === 'level') {
+      if (!isObviousOther) {
+        return 'level';
+      }
+      // Otherwise ignore accidental 'level' default and infer from target
+    } else {
+      const validCategories: ItemCategory[] = [
+        'entity', 'object', 'phenomenon', 'tale', 'group',
+        'poi', 'joke', 'subcluster', 'enigmatic', 'art', 'tech', 'archive'
+      ];
+      if (validCategories.includes(normExplicit)) {
+        return normExplicit;
+      }
+    }
+  }
+
+  // 2. Pattern Matching by Category
+
+  // Entities
+  if (
+    cleanTarget.startsWith('entity-') ||
+    cleanTarget.startsWith('entity_') ||
+    cleanTarget.startsWith('entidad-') ||
+    cleanTarget.startsWith('entidad_') ||
+    cleanTarget.startsWith('entities') ||
+    cleanTarget.startsWith('entidades') ||
+    cleanTarget.includes('unnumbered-entities') ||
+    cleanTarget.includes('enigmatic-entities')
+  ) {
+    return 'entity';
+  }
+
+  // Objects
+  if (
+    cleanTarget.startsWith('object-') ||
+    cleanTarget.startsWith('object_') ||
+    cleanTarget.startsWith('objeto-') ||
+    cleanTarget.startsWith('objeto_') ||
+    cleanTarget.startsWith('objects') ||
+    cleanTarget.startsWith('objetos')
+  ) {
+    return 'object';
+  }
+
+  // Phenomena
+  if (
+    cleanTarget.startsWith('phenomenon-') ||
+    cleanTarget.startsWith('phenomenon_') ||
+    cleanTarget.startsWith('fenomeno-') ||
+    cleanTarget.startsWith('fenomeno_') ||
+    cleanTarget.startsWith('phenomena') ||
+    cleanTarget.startsWith('fenomenos')
+  ) {
+    return 'phenomenon';
+  }
+
+  // Tales
+  if (
+    cleanTarget.startsWith('tale-') ||
+    cleanTarget.startsWith('tale_') ||
+    cleanTarget.startsWith('relato-') ||
+    cleanTarget.startsWith('relato_') ||
+    cleanTarget.includes('tales') ||
+    cleanTarget.includes('relatos')
+  ) {
+    return 'tale';
+  }
+
+  // Groups
+  if (
+    cleanTarget.startsWith('group-') ||
+    cleanTarget.startsWith('group_') ||
+    cleanTarget.startsWith('grupo-') ||
+    cleanTarget.startsWith('grupo_') ||
+    cleanTarget.startsWith('groups-list') ||
+    cleanTarget.startsWith('lista-de-grupos') ||
+    cleanTarget.includes('groups') ||
+    cleanTarget.includes('grupos')
+  ) {
+    return 'group';
+  }
+
+  // Persons of Interest (POI)
+  if (
+    cleanTarget.startsWith('poi-') ||
+    cleanTarget.startsWith('poi_') ||
+    cleanTarget.startsWith('pdi-') ||
+    cleanTarget.startsWith('pdi_') ||
+    cleanTarget.startsWith('poi-s') ||
+    cleanTarget.includes('person-of-interest') ||
+    cleanTarget.includes('persona-de-interes')
+  ) {
+    return 'poi';
+  }
+
+  // Joke entries
+  if (
+    cleanTarget.startsWith('joke-') ||
+    cleanTarget.startsWith('joke_') ||
+    cleanTarget.startsWith('broma-') ||
+    cleanTarget.startsWith('broma_') ||
+    cleanTarget.includes('joke-entries') ||
+    cleanTarget.includes('entradas-de-broma')
+  ) {
+    return 'joke';
+  }
+
+  // Series and Subclusters
+  if (
+    cleanTarget.startsWith('series-') ||
+    cleanTarget.startsWith('series/') ||
+    cleanTarget.startsWith('subcluster-') ||
+    cleanTarget.startsWith('subcluster/') ||
+    cleanTarget.startsWith('subclúster-') ||
+    cleanTarget.startsWith('subclúster/') ||
+    cleanTarget.includes('subcluster') ||
+    cleanTarget.includes('subclúster') ||
+    cleanTarget.includes('series-and-subclusters')
+  ) {
+    return 'subcluster';
+  }
+
+  // Canons (genuine canons only)
+  if (
+    cleanTarget.endsWith('-canon') ||
+    cleanTarget.endsWith('-canon-hub') ||
+    cleanTarget.includes('canon-hub') ||
+    cleanTarget === 'canons' ||
+    cleanTarget === 'black-knights' ||
+    cleanTarget === 'decay-canon-hub' ||
+    cleanTarget === 'desolation-canon-hub' ||
+    cleanTarget === 'industrialization-canon-hub' ||
+    cleanTarget === 'broken-city' ||
+    cleanTarget === 'the-council' ||
+    cleanTarget === 'pantheon-hub' ||
+    cleanTarget === 'terror-hotel' ||
+    cleanTarget === 'canonicon2024' ||
+    cleanTarget === 'dianic-saga' ||
+    cleanTarget === 'hub-de-los-caballeros-negros'
+  ) {
+    return 'canon';
+  }
+
+  // Levels (Numbered and Unnumbered/Enigmatic)
+  const isNumberedLevel =
+    cleanTarget.startsWith('level-') ||
+    cleanTarget.startsWith('level_') ||
+    cleanTarget.startsWith('nivel-') ||
+    cleanTarget.startsWith('nivel_') ||
+    cleanTarget.startsWith('normal-levels') ||
+    cleanTarget === 'levels' ||
+    cleanTarget === 'niveles' ||
+    /^(?:level|nivel)?\d+/i.test(cleanTarget);
+
+  const isKnownUnnumberedLevel =
+    cleanTarget.includes('unnumbered-levels') ||
+    cleanTarget.includes('niveles-enigmaticos') ||
+    cleanTarget === 'the-hub' ||
+    cleanTarget === 'the-end' ||
+    cleanTarget === 'snackrooms' ||
+    cleanTarget === 'run-for-your-life' ||
+    cleanTarget === 'level-fun' ||
+    cleanTarget === 'blue-channel' ||
+    cleanTarget === 'the-whiteout' ||
+    cleanTarget === 'the-blackout' ||
+    cleanTarget === 'the-hive' ||
+    cleanTarget === 'the-metro' ||
+    cleanTarget === 'the-frontrooms' ||
+    cleanTarget === 'the-grave' ||
+    cleanTarget === 'the-infinite-subway' ||
+    cleanTarget === 'the-void' ||
+    cleanTarget === 'empty-rooms' ||
+    cleanTarget === 'isometric-rooms' ||
+    cleanTarget === 'radiance' ||
+    cleanTarget === 'infrared';
+
+  if (isNumberedLevel || isKnownUnnumberedLevel) {
+    return 'level';
+  }
+
+  // 3. Fallback: Default to 'archive' (or 'level' if numeric), NEVER 'canon'
+  if (/^\d+/.test(cleanTarget)) {
+    return 'level';
+  }
+
+  return 'archive';
+}
 
 function decodeHtmlEntities(str: string): string {
   return str
@@ -463,37 +711,49 @@ function unwrapCollapsibles(html: string): string {
  */
 function extractYuiTabs(html: string): { tabs: DossierTab[]; remainingHtml: string } {
   const tabs: DossierTab[] = [];
-  const navsetStart = html.indexOf('class="yui-navset');
-  if (navsetStart === -1) return { tabs, remainingHtml: html };
+  let currentHtml = html;
+  let tabSetIndex = 0;
 
-  const navStart = html.indexOf('<ul class="yui-nav">', navsetStart);
-  if (navStart === -1) return { tabs, remainingHtml: html };
-  const navEnd = html.indexOf('</ul>', navStart);
-  const navHtml = html.substring(navStart, navEnd);
-  const titles = [...navHtml.matchAll(/<li[^>]*>[\s\S]*?<a[^>]*><em>([\s\S]*?)<\/em><\/a>[\s\S]*?<\/li>/gi)].map(m =>
-    decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')).trim()
-  );
+  while (true) {
+    const navsetStart = currentHtml.indexOf('class="yui-navset');
+    if (navsetStart === -1) break;
 
-  const contentStart = html.indexOf('<div class="yui-content">', navEnd);
-  if (contentStart === -1) return { tabs, remainingHtml: html };
+    const navStart = currentHtml.indexOf('<ul class="yui-nav">', navsetStart);
+    if (navStart === -1) break;
+    const navEnd = currentHtml.indexOf('</ul>', navStart);
+    if (navEnd === -1) break;
+    const navHtml = currentHtml.substring(navStart, navEnd);
+    const titles = [...navHtml.matchAll(/<li[^>]*>[\s\S]*?<a[^>]*><em>([\s\S]*?)<\/em><\/a>[\s\S]*?<\/li>/gi)].map(m =>
+      decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')).trim()
+    );
 
-  const wholeNavsetDivStart = html.lastIndexOf('<div', navsetStart);
-  const navsetEnd = findClosingDiv(html, wholeNavsetDivStart !== -1 ? wholeNavsetDivStart : navsetStart);
-  const remainingHtml = navsetEnd !== -1 ? html.substring(navsetEnd) : html;
+    const contentStart = currentHtml.indexOf('<div class="yui-content">', navEnd);
+    if (contentStart === -1) break;
 
-  const contentEnd = findClosingDiv(html, contentStart);
-  const contentHtml = contentEnd !== -1 ? html.substring(contentStart + 25, contentEnd - 6) : html.substring(contentStart + 25);
+    const wholeNavsetDivStart = currentHtml.lastIndexOf('<div', navsetStart);
+    const navsetEnd = findClosingDiv(currentHtml, wholeNavsetDivStart !== -1 ? wholeNavsetDivStart : navsetStart);
+    if (navsetEnd === -1 || navsetEnd <= (wholeNavsetDivStart !== -1 ? wholeNavsetDivStart : navsetStart)) break;
 
-  const tabBlocks = contentHtml.split(/<div id="wiki-tab-\d+-\d+"[^>]*>/i).slice(1);
-  for (let i = 0; i < tabBlocks.length && i < titles.length; i++) {
-    tabs.push({
-      id: `tab-${i}`,
-      title: titles[i] || `Pestaña ${i + 1}`,
-      content: stripHtml(tabBlocks[i]),
-    });
+    const contentEnd = findClosingDiv(currentHtml, contentStart);
+    const contentHtml = contentEnd !== -1 ? currentHtml.substring(contentStart + 25, contentEnd - 6) : currentHtml.substring(contentStart + 25);
+
+    const tabBlocks = contentHtml.split(/<div id="wiki-tab-\d+-\d+"[^>]*>/i).slice(1);
+    for (let i = 0; i < tabBlocks.length && i < titles.length; i++) {
+      tabs.push({
+        id: `tab-${tabSetIndex}-${i}`,
+        title: titles[i] || `Pestaña ${tabs.length + 1}`,
+        content: stripHtml(tabBlocks[i]),
+      });
+    }
+
+    // Preserve all content prior to and after the tabs
+    const before = wholeNavsetDivStart !== -1 ? currentHtml.substring(0, wholeNavsetDivStart) : '';
+    const after = currentHtml.substring(navsetEnd);
+    currentHtml = `${before}\n${after}`;
+    tabSetIndex++;
   }
 
-  return { tabs, remainingHtml };
+  return { tabs, remainingHtml: currentHtml };
 }
 
 function cleanDisclaimersAndJunk(html: string): string {
@@ -503,18 +763,30 @@ function cleanDisclaimersAndJunk(html: string): string {
   // 2. Unwrap lore collapsibles
   cleaned = unwrapCollapsibles(cleaned);
 
+  // 3. Strip widget boxes cleanly using depth-aware findClosingDiv
+  const boxClasses = ['translations', 'list-pages-box', 'creditRate', 'infobox'];
+  for (const cls of boxClasses) {
+    const reg = new RegExp(`<div[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>`, 'gi');
+    let m;
+    while ((m = reg.exec(cleaned)) !== null) {
+      const start = m.index;
+      const end = findClosingDiv(cleaned, start);
+      if (end !== -1 && end > start) {
+        cleaned = cleaned.substring(0, start) + cleaned.substring(end);
+        reg.lastIndex = start;
+      } else {
+        break;
+      }
+    }
+  }
+
   return cleaned
     // Remove scripts and styles
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
-    // Remove infoboxes / credits boxes
+    // Remove u-infobox
     .replace(/<div[^>]*id="u-infobox"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/div>/gi, '')
-    .replace(/<div[^>]*class="[^"]*infobox[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, '')
-    // Remove translation flag boxes and list-pages
-    .replace(/<div[^>]*class="[^"]*translations[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, '')
-    .replace(/<div[^>]*class="[^"]*list-pages-box[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, '')
     // Remove rating and credits widgets
-    .replace(/<div[^>]*class="[^"]*creditRate[^"]*"[\s\S]*?<\/div>\s*<\/div>/gi, '')
     .replace(/<div[^>]*class="[^"]*rateBox[^"]*"[\s\S]*?<\/div>/gi, '')
     .replace(/<div[^>]*class="[^"]*page-rate-widget-box[^"]*"[\s\S]*?<\/div>/gi, '')
     // Remove wikiwalk nav and page tags
@@ -531,7 +803,7 @@ function cleanDisclaimersAndJunk(html: string): string {
     .replace(/<div[^>]*id="wad-[^"]*"[\s\S]*?<\/div>/gi, '');
 }
 
-function getLevelTags(numberStr: string, subTitle?: string, lang: 'es' | 'en' = 'es'): string[] {
+export function getLevelTags(numberStr: string, subTitle?: string, lang: 'es' | 'en' = 'es'): string[] {
   const tags: string[] = [];
   const isSub = numberStr.includes('.');
   if (isSub) {
@@ -541,17 +813,7 @@ function getLevelTags(numberStr: string, subTitle?: string, lang: 'es' | 'en' = 
   }
 
   const num = parseFloat(numberStr);
-  if (!isNaN(num)) {
-    if (num <= 1) {
-      tags.push(lang === 'es' ? 'Clase 0 / 1' : 'Class 0 / 1');
-      tags.push(lang === 'es' ? 'Seguro' : 'Safe');
-    } else if (num <= 3) {
-      tags.push(lang === 'es' ? 'Clase 2 / 3' : 'Class 2 / 3');
-      tags.push(lang === 'es' ? 'Inseguro' : 'Unsafe');
-    } else {
-      tags.push(lang === 'es' ? 'Peligro Crítico' : 'Critical Hazard');
-    }
-  } else {
+  if (isNaN(num)) {
     tags.push(lang === 'es' ? 'Enigmático' : 'Enigmatic');
   }
 
@@ -579,20 +841,10 @@ function getLevelSnippet(title: string, subTitle?: string, numberStr?: string, l
   }
 }
 
-function getEntityTags(numberStr: string, subTitle?: string, lang: 'es' | 'en' = 'es'): string[] {
+export function getEntityTags(numberStr: string, subTitle?: string, lang: 'es' | 'en' = 'es'): string[] {
   const tags: string[] = [lang === 'es' ? 'Entidad' : 'Entity'];
   const num = parseInt(numberStr, 10);
-  if (!isNaN(num)) {
-    if (num === 1 || num === 2 || num === 5) {
-      tags.push(lang === 'es' ? 'Biología Anómala' : 'Anomalous Biology');
-    } else if (num === 3 || num === 8 || num === 9) {
-      tags.push(lang === 'es' ? 'Hostil' : 'Hostile');
-    } else if (num === 4 || num === 6 || num === 7) {
-      tags.push(lang === 'es' ? 'Neutral / Pasivo' : 'Neutral / Passive');
-    } else {
-      tags.push(lang === 'es' ? 'Fauna Anómala' : 'Anomalous Fauna');
-    }
-  } else {
+  if (isNaN(num)) {
     tags.push(lang === 'es' ? 'Desconocido' : 'Unknown');
   }
   tags.push('M.E.G. Log');
@@ -647,6 +899,8 @@ const CANON_HEADING_TRANSLATIONS: Record<string, string> = {
 };
 
 export class WikidotService {
+  static inferItemCategory = inferItemCategory;
+
   /**
    * Fetches levels with full canonical titles and names in ES or EN
    */
@@ -704,7 +958,7 @@ export class WikidotService {
               const rawS = em[3]
                 ? cleanQuotes(decodeHtmlEntities(em[3].replace(/<[^>]+>/g, '')))
                 : '';
-              const s = polishSpanishTranslation(rawS);
+              const s = rawS;
               const d = s ? `${c} - "${s}"` : c;
               esMap.set(p, { code: c, sub: s, displayName: d });
             }
@@ -731,9 +985,12 @@ export class WikidotService {
       }
 
       return list.sort((a, b) => {
-        const numA = parseFloat(a.numberStr) || 999999;
-        const numB = parseFloat(b.numberStr) || 999999;
-        return numA - numB;
+        const nA = parseFloat(a.numberStr);
+        const nB = parseFloat(b.numberStr);
+        const numA = Number.isFinite(nA) ? nA : 999999;
+        const numB = Number.isFinite(nB) ? nB : 999999;
+        if (numA !== numB) return numA - numB;
+        return a.title.localeCompare(b.title);
       });
     } catch (err) {
       console.error('Error in fetchLevels:', err);
@@ -797,7 +1054,7 @@ export class WikidotService {
               const rawS = em[3]
                 ? cleanQuotes(decodeHtmlEntities(em[3].replace(/<[^>]+>/g, '')))
                 : '';
-              const s = polishSpanishTranslation(rawS);
+              const s = rawS;
               const d = s ? `${c} - "${s}"` : c;
               esMap.set(p, { code: c, sub: s, displayName: d });
             }
@@ -823,9 +1080,12 @@ export class WikidotService {
       }
 
       return list.sort((a, b) => {
-        const numA = parseInt(a.numberStr, 10) || 99999;
-        const numB = parseInt(b.numberStr, 10) || 99999;
-        return numA - numB;
+        const nA = parseFloat(a.numberStr);
+        const nB = parseFloat(b.numberStr);
+        const numA = Number.isFinite(nA) ? nA : 999999;
+        const numB = Number.isFinite(nB) ? nB : 999999;
+        if (numA !== numB) return numA - numB;
+        return a.title.localeCompare(b.title);
       });
     } catch (err) {
       console.error('Error in fetchEntities:', err);
@@ -1091,7 +1351,10 @@ export class WikidotService {
         else if (cat.key === 'poi') itemCategory = 'poi';
         else if (cat.key === 'canons') itemCategory = 'canon';
         else if (cat.key === 'jokes') itemCategory = 'joke';
-        else if (cat.key.startsWith('enigmatic')) itemCategory = 'enigmatic';
+        else if (cat.key === 'subclusters') itemCategory = 'subcluster';
+        else if (cat.key === 'enigmatic_levels') itemCategory = 'level';
+        else if (cat.key === 'enigmatic_entities') itemCategory = 'entity';
+        else if (cat.key === 'art_gallery') itemCategory = 'art';
 
         list.push({
           id,
@@ -1128,7 +1391,7 @@ export class WikidotService {
               const rawS = em[3]
                 ? cleanQuotes(decodeHtmlEntities(em[3].replace(/<[^>]+>/g, '')))
                 : '';
-              const s = polishSpanishTranslation(rawS);
+              const s = rawS;
               const d = s ? `${c} - "${s}"` : c;
               esMap.set(p, { code: c, sub: s, displayName: d });
             }
@@ -1144,7 +1407,52 @@ export class WikidotService {
             }
           }
         } catch (e) {
-          console.warn('Could not fetch Spanish library category overlay:', e);
+          if (cat.key !== 'subclusters') {
+            console.warn('Could not fetch Spanish library category overlay:', e);
+          }
+        }
+      }
+
+      // Support overlay for Hispanic community objects (/objeto-es-*)
+      if (lang === 'es' && cat.key === 'objects') {
+        try {
+          const hispRes = await fetch(`${BASE_ES}/objetos`);
+          if (hispRes.ok) {
+            const hispHtml = await hispRes.text();
+            const hStart = hispHtml.indexOf('id="page-content"');
+            const hEnd = hispHtml.indexOf('id="page-info-break"');
+            const hContent = hispHtml.substring(hStart, hEnd > 0 ? hEnd : hispHtml.length);
+
+            const hispMatches = [...hContent.matchAll(regex)];
+            for (const hm of hispMatches) {
+              const p = hm[1];
+              if (seen.has(p) || !p.includes('objeto-es-')) continue;
+              seen.add(p);
+              const c = decodeHtmlEntities(hm[2].trim());
+              const rawS = hm[3]
+                ? cleanQuotes(decodeHtmlEntities(hm[3].replace(/<[^>]+>/g, '')))
+                : '';
+              const d = rawS ? `${c} - "${rawS}"` : c;
+              const id = p.replace(/^\//, '');
+
+              list.push({
+                id,
+                path: p,
+                title: c,
+                subTitle: rawS || undefined,
+                displayName: d,
+                category: 'object',
+                numberStr: id,
+                lang: 'es',
+                tags: [`#OBJ`, `#Hispano`, `#M.E.G.`],
+                snippet: rawS
+                  ? `"${rawS}" — Objeto original de la rama hispanohablante.`
+                  : 'Objeto original de la rama hispanohablante.',
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Could not fetch Hispanic objects overlay:', e);
         }
       }
 
@@ -1160,24 +1468,45 @@ export class WikidotService {
    */
   static async fetchItemDetails(
     path: string,
-    category: ItemCategory = 'level',
-    lang: 'es' | 'en' = 'es'
+    category?: ItemCategory,
+    lang: 'es' | 'en' = 'es',
+    signal?: AbortSignal
   ): Promise<BackroomsItem> {
-    const cleanPath = path.startsWith('/') ? path : '/' + path;
+    let cleanPath = path.startsWith('/') ? path : '/' + path;
+
+    // Slug reconciliation:
+    // /objeto-X (without -es-) -> /object-X
+    // /fenomeno-X (without -es-) -> /phenomenon-X
+    // /nivel-X -> /level-X
+    // /entidad-X -> /entity-X
+    // Preserve /objeto-es-X as-is
+    if (/^\/objeto-(?!es-)/i.test(cleanPath)) {
+      cleanPath = cleanPath.replace(/^\/objeto-/i, '/object-');
+    } else if (/^\/fenomeno-(?!es-)/i.test(cleanPath)) {
+      cleanPath = cleanPath.replace(/^\/fenomeno-/i, '/phenomenon-');
+    } else if (/^\/nivel-/i.test(cleanPath)) {
+      cleanPath = cleanPath.replace(/^\/nivel-/i, '/level-');
+    } else if (/^\/entidad-/i.test(cleanPath)) {
+      cleanPath = cleanPath.replace(/^\/entidad-/i, '/entity-');
+    }
+
+    const cleanId = cleanPath.replace(/^\//, '');
+    const resolvedCategory = inferItemCategory(cleanId, cleanPath, category);
+
     // For canons, always fetch English as master source because Wikidot ES only has partial/outdated 2021 stubs
     // lacking Sagas, The Broken City, Dianic Saga, etc.
-    let url = `${lang === 'es' && category !== 'canon' ? BASE_ES : BASE_EN}${cleanPath}`;
+    let url = `${lang === 'es' && resolvedCategory !== 'canon' ? BASE_ES : BASE_EN}${cleanPath}`;
     let isFallback = false;
 
-    let res = await fetch(url);
+    let res = await fetch(url, { signal });
     if (!res.ok && lang === 'es') {
       // If not yet translated in Spanish branch, fallback to English
       url = `${BASE_EN}${cleanPath}`;
-      res = await fetch(url);
+      res = await fetch(url, { signal });
       isFallback = true;
     }
 
-    if (category === 'canon' && lang === 'es') {
+    if (resolvedCategory === 'canon' && lang === 'es') {
       isFallback = true;
     }
 
@@ -1197,7 +1526,7 @@ export class WikidotService {
       subTitle = cleanQuotes(fullTitle.substring(splitIndex + 3));
     }
 
-    const numMatch = title.match(/(?:Level|Nivel|Entity|Entidad)\s+([^\s\-:]+)/i);
+    const numMatch = title.match(/(?:Level|Nivel|Entity|Entidad|Object|Objeto|Phenomenon|Fenómeno)\s+([^\s\-:]+)/i);
     const numberStr = numMatch ? numMatch[1] : '0';
 
     // 2. Isolate #page-content and sanitize junk
@@ -1300,9 +1629,9 @@ export class WikidotService {
       }
     }
 
-    // Ensure all Spanish content (both official Wikidot ES and auto-translated fallback)
-    // passes through the linguistic polish engine for natural Backrooms syntax and terminology.
-    if (lang === 'es') {
+    // Only apply linguistic polish engine to auto-translated fallback content in Spanish.
+    // Official Spanish Wikidot content must remain unmutated.
+    if (isAutoTranslated && isFallback && lang === 'es') {
       if (title) title = polishSpanishTranslation(title);
       if (subTitle) subTitle = polishSpanishTranslation(subTitle);
       if (prologue) prologue = polishSpanishTranslation(prologue);
@@ -1330,9 +1659,9 @@ export class WikidotService {
     }
 
     return {
-      id: cleanPath.replace(/\//g, ''),
+      id: cleanId,
       path: cleanPath,
-      category,
+      category: resolvedCategory,
       numberStr,
       title,
       subTitle,
@@ -1405,26 +1734,59 @@ export class WikidotService {
   }
 
   private static extractImages(content: string, baseOrigin: string): WikiImage[] {
+    let cleanForImages = content;
+
+    // Strip translation blocks, list-pages, and credit widgets using findClosingDiv
+    const boxPatterns = [
+      /<div[^>]*class="[^"]*\btranslations\b[^"]*"[^>]*>/gi,
+      /<div[^>]*class="[^"]*\blist-pages-box\b[^"]*"[^>]*>/gi,
+      /<div[^>]*class="[^"]*\bcreditRate\b[^"]*"[^>]*>/gi,
+      /<div[^>]*class="[^"]*\brateBox\b[^"]*"[^>]*>/gi,
+      /<div[^>]*class="[^"]*\bpage-rate-widget-box\b[^"]*"[^>]*>/gi,
+    ];
+    for (const pat of boxPatterns) {
+      let m;
+      while ((m = pat.exec(cleanForImages)) !== null) {
+        const start = m.index;
+        const end = findClosingDiv(cleanForImages, start);
+        if (end !== -1 && end > start) {
+          cleanForImages = cleanForImages.substring(0, start) + cleanForImages.substring(end);
+          pat.lastIndex = start;
+        } else {
+          break;
+        }
+      }
+    }
+
     const images: WikiImage[] = [];
     const seen = new Set<string>();
 
-    const imgMatches = [...content.matchAll(/<img[^>]+src="([^">]+)"[^>]*>/gi)];
+    const imgMatches = [...cleanForImages.matchAll(/<img[^>]+src="([^">]+)"[^>]*>/gi)];
 
     for (const match of imgMatches) {
       let src = match[1].trim();
       if (!src) continue;
 
+      const lowerSrc = src.toLowerCase();
+      const rawTag = match[0].toLowerCase();
+
       if (
-        src.includes('iconfinder.com') ||
-        src.includes('zenzick') ||
-        src.includes('avatar') ||
-        src.includes('component:translations') ||
-        src.includes('nav:side') ||
-        src.includes('wikidot.com/common') ||
-        src.includes('flags') ||
-        src.includes('.gif') ||
-        src.includes('badge') ||
-        src.includes('iosicon')
+        lowerSrc.includes('iconfinder.com') ||
+        lowerSrc.includes('zenzick') ||
+        lowerSrc.includes('avatar') ||
+        lowerSrc.includes('component:translations') ||
+        lowerSrc.includes('translations') ||
+        lowerSrc.includes('nav:side') ||
+        lowerSrc.includes('wikidot.com/common') ||
+        lowerSrc.includes('flag') || // matches flag, flags, JP-flag.png, flag-germany2x.png
+        lowerSrc.includes('scpsandbox') ||
+        lowerSrc.includes('.gif') ||
+        lowerSrc.includes('badge') ||
+        lowerSrc.includes('iosicon') ||
+        lowerSrc.includes('button') ||
+        lowerSrc.includes('pixel') ||
+        rawTag.includes('flag') ||
+        rawTag.includes('translat')
       ) {
         continue;
       }
@@ -1456,13 +1818,47 @@ export class WikidotService {
     entrances: string[];
     exits: string[];
   } {
-    // Strip SD container from body
-    const cleanBody = content.replace(/<div class="sd-container"[\s\S]*?<\/div>\s*<\/div>/gi, '');
+    // 1. Strip SD container from body using depth-balance loop
+    let cleanBody = content;
+    const sdRegex = /<div[^>]*class="[^"]*\bsd-container\b[^"]*"[^>]*>/gi;
+    let sdMatch;
+    while ((sdMatch = sdRegex.exec(cleanBody)) !== null) {
+      const startIdx = sdMatch.index;
+      const endIdx = findClosingDiv(cleanBody, startIdx);
+      if (endIdx !== -1 && endIdx > startIdx) {
+        cleanBody = cleanBody.substring(0, startIdx) + cleanBody.substring(endIdx);
+        sdRegex.lastIndex = startIdx;
+      } else {
+        break;
+      }
+    }
 
-    const headerRegex = /<(h[1-6])[^>]*>([\s\S]*?)<\/\1>/gi;
+    // 2. Control section fragmentation:
+    // Restrict top section splits to h1-h2 (fallback to h3 if no h1-h2 exist).
+    // Convert lower hierarchy headers into inline markdown bold subheadings.
+    const topHeaderRegex = /<(h[1-2])[^>]*>([\s\S]*?)<\/\1>/gi;
+    const hasTopHeaders = topHeaderRegex.test(cleanBody);
+
+    if (hasTopHeaders) {
+      cleanBody = cleanBody.replace(/<(h[3-6])[^>]*>([\s\S]*?)<\/\1>/gi, (_, tag, text) => {
+        const t = stripHtml(text).replace(/^#+\s*/, '').replace(/^[*_~]+|[*_~]+$/g, '').replace(/:$/, '').trim();
+        return t ? `\n\n**${t}**\n\n` : '';
+      });
+    } else {
+      const h3Regex = /<(h3)[^>]*>([\s\S]*?)<\/\1>/gi;
+      const hasH3 = h3Regex.test(cleanBody);
+      if (hasH3) {
+        cleanBody = cleanBody.replace(/<(h[4-6])[^>]*>([\s\S]*?)<\/\1>/gi, (_, tag, text) => {
+          const t = stripHtml(text).replace(/^#+\s*/, '').replace(/^[*_~]+|[*_~]+$/g, '').replace(/:$/, '').trim();
+          return t ? `\n\n**${t}**\n\n` : '';
+        });
+      }
+    }
+
+    const headerRegex = hasTopHeaders ? /<(h[1-2])[^>]*>([\s\S]*?)<\/\1>/gi : /<(h3)[^>]*>([\s\S]*?)<\/\1>/gi;
     const matches = [...cleanBody.matchAll(headerRegex)];
 
-    // 1. Text before the very first header = Prologue / Introductory lore (e.g. Ria Valpuri looking at the stars in Level 0.1)
+    // 3. Text before the very first header = Prologue / Introductory lore
     let rawPrologue = '';
     if (matches.length > 0) {
       const firstHeaderPos = matches[0].index ?? cleanBody.indexOf(matches[0][0]);
@@ -1471,10 +1867,11 @@ export class WikidotService {
       rawPrologue = stripHtml(cleanBody);
     }
 
-    // Clean any author credit or rating text if it slipped into prologue
+    // Clean any author credit, rating text, or residual SD text if it slipped into prologue
     const prologue = rawPrologue
       .replace(/^Info\s*Concepto original[\s\S]*?\n\n/i, '')
       .replace(/^Puntuación:[^\n]*\n+/i, '')
+      .replace(/DIFICULTAD DE SUPERVIVENCIA:[\s\S]*?(?=\n\n|$)/gi, '')
       .trim();
 
     const sections: DossierSection[] = [];
@@ -1483,7 +1880,11 @@ export class WikidotService {
     let epilogue: string | undefined = undefined;
 
     for (let i = 0; i < matches.length; i++) {
-      let headerTitle = stripHtml(matches[i][2]);
+      let headerTitle = stripHtml(matches[i][2])
+        .replace(/^#+\s*/, '')
+        .replace(/^[*_~]+|[*_~]+$/g, '')
+        .replace(/:$/, '')
+        .trim();
       if (!headerTitle) continue;
 
       if (headerTitle.toUpperCase() === 'BODY:' || headerTitle.toUpperCase() === 'BODY') {
@@ -1497,7 +1898,7 @@ export class WikidotService {
       
       let sectionHtml = cleanBody.substring(headerIndex + matches[i][0].length, nextHeaderIndex);
 
-      // Check if the final section has an epilogue after spacing breaks or <hr> (e.g. Ria Valpuri weeping in the yellow halls)
+      // Check if the final section has an epilogue after spacing breaks or <hr>
       if (i === matches.length - 1) {
         const breakMatch = sectionHtml.match(/(?:<br\s*[\/]?>[\s\n\r]*){3,}/i);
         const hrIdx = sectionHtml.indexOf('<hr');
@@ -1546,8 +1947,16 @@ export class WikidotService {
           const l = line.toLowerCase();
           if (l.includes('entrance') || l.includes('entrada')) {
             currentTarget = 'entrance';
+            const stripped = line.replace(/^(?:•\s*)?(?:entradas?|entrances?)\s*[:\-–—]\s*/i, '').trim();
+            if (stripped.length > 3) {
+              entrances.push(stripped);
+            }
           } else if (l.includes('exit') || l.includes('salida')) {
             currentTarget = 'exit';
+            const stripped = line.replace(/^(?:•\s*)?(?:salidas?|exits?)\s*[:\-–—]\s*/i, '').trim();
+            if (stripped.length > 3) {
+              exits.push(stripped);
+            }
           } else if (currentTarget === 'entrance') {
             entrances.push(line);
           } else if (currentTarget === 'exit') {
@@ -1560,16 +1969,19 @@ export class WikidotService {
       }
     }
 
-    // 2. Determine official Description
+    // 4. Determine official Description
     let description = '';
     const descIndex = sections.findIndex(
-      s => s.title.toLowerCase().includes('description') || s.title.toLowerCase().includes('descripción')
+      s => s.title.toLowerCase().includes('description') ||
+           s.title.toLowerCase().includes('descripción') ||
+           s.title.toLowerCase().includes('generalidades') ||
+           s.title.toLowerCase().includes('overview')
     );
 
     if (descIndex !== -1) {
       description = sections[descIndex].content;
       sections.splice(descIndex, 1);
-    } else if (!prologue && sections.length > 0) {
+    } else if (sections.length > 0) {
       description = sections[0].content;
       sections.shift();
     }
@@ -1583,4 +1995,195 @@ export class WikidotService {
       exits,
     };
   }
+}
+
+export const TRAIT_TRANSLATIONS: Record<string, string> = {
+  'safe': 'Seguro',
+  'secure': 'Asegurado',
+  'unsafe': 'Inseguro',
+  'unsecure': 'Desasegurado',
+  'devoid of entities': 'Desprovisto de Entidades',
+  'minimal entity count': 'Presencia Mínima de Entidades',
+  'low entity count': 'Baja Presencia de Entidades',
+  'medium entity count': 'Presencia Moderada de Entidades',
+  'high entity count': 'Alta Presencia de Entidades',
+  'infested with entities': 'Infestado de Entidades',
+  'entity infestation': 'Infestación de Entidades',
+  'undetermined': 'Indeterminado',
+  'indeterminado': 'Indeterminado',
+  'unconfirmed': 'Sin Confirmar',
+  'sin confirmar': 'Sin Confirmar',
+  'environmental hazards': 'Peligros Ambientales',
+  'psychological hazards': 'Peligros Psicológicos',
+  'biological hazards': 'Peligros Biológicos',
+  'anomalous properties': 'Propiedades Anómalas',
+};
+
+export const DEFAULT_TRAITS_BY_CLASS: Record<string, { safety: string; security: string; entityCount: string }> = {
+  '0': { safety: 'Safe', security: 'Secure', entityCount: 'Devoid of Entities' },
+  '1': { safety: 'Safe', security: 'Secure', entityCount: 'Minimal Entity Count' },
+  '2': { safety: 'Unsafe', security: 'Secure', entityCount: 'Low Entity Count' },
+  '3': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Medium Entity Count' },
+  '4': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'High Entity Count' },
+  '5': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Entity Infestation' },
+  'habitable': { safety: 'Safe', security: 'Secure', entityCount: 'Devoid of Entities' },
+  'deadzone': { safety: 'Unsafe', security: 'Unsecure', entityCount: 'Entity Infestation' },
+};
+
+export function translateTrait(trait: string, lang: 'es' | 'en' = 'es'): string {
+  if (lang !== 'es' || !trait) return trait;
+  const lower = trait.trim().toLowerCase();
+  if (TRAIT_TRANSLATIONS[lower]) return TRAIT_TRANSLATIONS[lower];
+  return trait;
+}
+
+export function getSurvivalDifficultyFallback(classLevel?: string, lang: 'es' | 'en' = 'es') {
+  const classKey = (classLevel || '').toLowerCase().trim();
+  if (classKey && DEFAULT_TRAITS_BY_CLASS[classKey]) {
+    const d = DEFAULT_TRAITS_BY_CLASS[classKey];
+    return {
+      safety: translateTrait(d.safety, lang),
+      security: translateTrait(d.security, lang),
+      entityCount: translateTrait(d.entityCount, lang),
+    };
+  }
+  return {
+    safety: lang === 'es' ? 'Indeterminado' : 'Undetermined',
+    security: lang === 'es' ? 'Indeterminado' : 'Undetermined',
+    entityCount: lang === 'es' ? 'Sin Confirmar' : 'Unconfirmed',
+  };
+}
+
+export interface TextSegment {
+  text: string;
+  isLink?: boolean;
+  isExternal?: boolean;
+  path?: string;
+  category?: ItemCategory;
+}
+
+export const SPECIAL_ENTITIES: Record<string, string> = {
+  smiler: 'entity-3',
+  smilers: 'entity-3',
+  sonrientes: 'entity-3',
+  hound: 'entity-8',
+  hounds: 'entity-8',
+  sabueso: 'entity-8',
+  sabuesos: 'entity-8',
+  'skin-stealer': 'entity-10',
+  'skin-stealers': 'entity-10',
+  'ladrones de piel': 'entity-10',
+  'roba pieles': 'entity-10',
+  deathmoth: 'entity-4',
+  deathmoths: 'entity-4',
+  faceling: 'entity-9',
+  facelings: 'entity-9',
+  infaciales: 'entity-9',
+};
+
+export function parseNoclipSegments(content?: string): TextSegment[] {
+  if (!content) return [];
+
+  const pattern = /\[([^\]]+)\]\(([^)]+)\)|(?:Nivel|Level)\s+(\d+(?:\.\d+)?)|(?:Entidad|Entity)\s+(\d+)|(?:Objeto|Object)\s+(\d+)|(?:Fen[oó]meno|Phenomenon)\s+(\d+)|(\b(?:smilers?|sonrientes|hounds?|sabuesos?|skin-stealers?|ladrones de piel|roba pieles|deathmoths?|facelings?|infaciales)\b)/gi;
+
+  const segments: TextSegment[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: content.substring(lastIndex, match.index) });
+    }
+
+    const matchedText = match[0];
+    const mdTitle = match[1];
+    const mdPath = match[2];
+    const levelNum = match[3];
+    const entityNum = match[4];
+    const objectNum = match[5];
+    const phenomNum = match[6];
+    const namedMonster = match[7];
+
+    if (mdTitle && mdPath) {
+      const rawPath = mdPath.trim();
+      const isExternal = /^(?:https?:\/\/|mailto:)/i.test(rawPath);
+
+      if (isExternal) {
+        segments.push({
+          text: mdTitle.trim(),
+          isLink: true,
+          isExternal: true,
+          path: rawPath,
+        });
+      } else {
+        const cleanPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+        const cleanId = cleanPath.replace(/^\//, '');
+        const cat = inferItemCategory(cleanId, cleanPath);
+
+        segments.push({
+          text: mdTitle.trim(),
+          isLink: true,
+          isExternal: false,
+          path: cleanPath,
+          category: cat,
+        });
+      }
+    } else if (levelNum) {
+      const cleanNum = levelNum.replace('.', '-');
+      segments.push({
+        text: matchedText,
+        isLink: true,
+        isExternal: false,
+        path: `/level-${cleanNum}`,
+        category: 'level',
+      });
+    } else if (entityNum) {
+      segments.push({
+        text: matchedText,
+        isLink: true,
+        isExternal: false,
+        path: `/entity-${entityNum}`,
+        category: 'entity',
+      });
+    } else if (objectNum) {
+      segments.push({
+        text: matchedText,
+        isLink: true,
+        isExternal: false,
+        path: `/object-${objectNum}`,
+        category: 'object',
+      });
+    } else if (phenomNum) {
+      segments.push({
+        text: matchedText,
+        isLink: true,
+        isExternal: false,
+        path: `/phenomenon-${phenomNum}`,
+        category: 'phenomenon',
+      });
+    } else if (namedMonster) {
+      const targetSlug = SPECIAL_ENTITIES[namedMonster.toLowerCase()];
+      if (targetSlug) {
+        segments.push({
+          text: matchedText,
+          isLink: true,
+          isExternal: false,
+          path: `/${targetSlug}`,
+          category: 'entity',
+        });
+      } else {
+        segments.push({ text: matchedText });
+      }
+    } else {
+      segments.push({ text: matchedText });
+    }
+
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < content.length) {
+    segments.push({ text: content.substring(lastIndex) });
+  }
+
+  return segments;
 }

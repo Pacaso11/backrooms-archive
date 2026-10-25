@@ -24,6 +24,7 @@ import { HazardFilterBar, HazardFilter } from '../../components/HazardFilterBar'
 import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { useLanguage } from '../../context/LanguageContext';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -32,13 +33,13 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 export default function LevelsScreen() {
   const router = useRouter();
   const { isSplitView, masterWidth } = useResponsiveLayout();
+  const { language: lang, setLanguage } = useLanguage();
 
   const [levels, setLevels] = useState<WikiListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedPath, setSelectedPath] = useState<string>('/level-0');
-  const [lang, setLang] = useState<'es' | 'en'>('es');
 
   // Reading session & history
   const [lastRead, setLastRead] = useState<LastReadSession | null>(null);
@@ -58,10 +59,9 @@ export default function LevelsScreen() {
     setIsPanelExpanded(prev => !prev);
   }, []);
 
-  const loadLevels = async (targetLang?: 'es' | 'en', forceRefresh = false) => {
+  const loadLevels = useCallback(async (targetLang?: 'es' | 'en', forceRefresh = false) => {
     try {
-      const currentLang = targetLang || (await StorageService.getLanguage());
-      setLang(currentLang);
+      const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
         const cached = await StorageService.getCachedIndex('levels');
@@ -80,7 +80,7 @@ export default function LevelsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [lang]);
 
   const loadReadingState = async () => {
     const session = await StorageService.getLastReadSession();
@@ -97,14 +97,13 @@ export default function LevelsScreen() {
   );
 
   useEffect(() => {
-    loadLevels();
-  }, []);
+    loadLevels(lang);
+  }, [lang, loadLevels]);
 
   const handleLanguageChange = async (newLang: 'es' | 'en') => {
-    setLang(newLang);
-    await StorageService.setLanguage(newLang);
     setLoading(true);
-    loadLevels(newLang, true);
+    await setLanguage(newLang);
+    await loadLevels(newLang, true);
   };
 
   const onRefresh = () => {
@@ -133,7 +132,7 @@ export default function LevelsScreen() {
     const chosen = levels[randomIndex];
     setSelectedPath(chosen.path);
     if (!isSplitView) {
-      router.push(`/dossier/${chosen.id}`);
+      router.push(`/dossier/${chosen.id}?category=level`);
     }
   }, [levels, isSplitView, router]);
 
@@ -194,7 +193,7 @@ export default function LevelsScreen() {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setIsPanelExpanded(false);
       }
-      router.push(`/dossier/${item.id}`);
+      router.push(`/dossier/${item.id}?category=level`);
     }
   }, [isSplitView, router, isPanelExpanded]);
 
