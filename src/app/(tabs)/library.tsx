@@ -5,7 +5,6 @@ import {
   StyleSheet,
   FlatList,
   ScrollView,
-  ActivityIndicator,
   RefreshControl,
   Pressable,
   Platform,
@@ -14,7 +13,7 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { WikiListItem, LibraryCategoryDef } from '../../types/wikidot';
-import { WikidotService, LIBRARY_CATEGORIES, inferItemCategory } from '../../services/wikidotService';
+import { WikidotService, LIBRARY_CATEGORIES, inferItemCategory, getLibraryCategoryBadge } from '../../services/wikidotService';
 import { StorageService } from '../../services/storageService';
 import { LibraryItemCard } from '../../components/LibraryItemCard';
 import { SearchBar } from '../../components/SearchBar';
@@ -25,6 +24,8 @@ import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
+import { EmptyState, LoadingState } from '../../components/ScreenStates';
+import { SyncModal } from '../../components/SyncModal';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -46,6 +47,7 @@ export default function LibraryScreen() {
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   // Load read status on focus
   useFocusEffect(
@@ -62,7 +64,7 @@ export default function LibraryScreen() {
       const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
-        const cached = await StorageService.getCachedIndex(cat.key);
+        const cached = await StorageService.getCachedIndex(cat.key, currentLang);
         if (cached && cached.length > 0) {
           setItems(cached);
           if (cached[0] && !selectedPath) {
@@ -79,7 +81,7 @@ export default function LibraryScreen() {
       if (data[0] && !selectedPath) {
         setSelectedPath(data[0].path);
       }
-      await StorageService.saveIndexToCache(cat.key, data);
+      await StorageService.saveIndexToCache(cat.key, data, currentLang);
     } catch (err: any) {
       console.error(`Error loading library category ${cat.key}:`, err);
       setError(err?.message || (lang === 'es' ? 'Error al cargar la categoría del archivo' : 'Failed to load library category'));
@@ -203,14 +205,14 @@ export default function LibraryScreen() {
       <LibraryItemCard
         item={item}
         categoryColor={activeCategory.color}
-        categoryBadge={activeCategory.badge}
+        categoryBadge={getLibraryCategoryBadge(activeCategory.key, lang)}
         isSelected={isSplitView && selectedPath === item.path}
         isRead={readIds.has(item.id)}
         onPress={() => handleItemPress(item)}
         onToggleRead={() => toggleReadStatus(item.id)}
       />
     );
-  }, [activeCategory, isSplitView, selectedPath, readIds, handleItemPress, toggleReadStatus]);
+  }, [activeCategory, lang, isSplitView, selectedPath, readIds, handleItemPress, toggleReadStatus]);
 
   const bottomListPadding = Math.max(insets.bottom, 12) + 80;
 
@@ -229,6 +231,15 @@ export default function LibraryScreen() {
               />
             </View>
             <View style={styles.langToggleWrapper}>
+              <Pressable
+                onPress={() => setShowSyncModal(true)}
+                style={styles.syncHeaderBtn}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel="Descarga offline táctica"
+              >
+                <Ionicons name="cloud-download-outline" size={18} color={THEME.colors.accentAmber} />
+              </Pressable>
               <LanguageToggle
                 currentLang={lang}
                 onToggle={handleLanguageChange}
@@ -256,6 +267,8 @@ export default function LibraryScreen() {
                       backgroundColor: `${cat.color}22`,
                     },
                   ]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: isActive }}
                   onPress={() => handleCategorySelect(cat)}
                 >
                   <Ionicons
@@ -338,31 +351,19 @@ export default function LibraryScreen() {
 
         {/* Items List */}
         {error && items.length === 0 ? (
-          <View style={styles.centerContainer}>
-            <Ionicons name="alert-circle-outline" size={48} color={THEME.colors.accentRed} />
-            <Text style={styles.errorTitle}>
-              {lang === 'es' ? 'ERROR DE CONEXIÓN AL ARCHIVO' : 'ARCHIVE CONNECTION ERROR'}
-            </Text>
-            <Text style={styles.errorSub}>{error}</Text>
-            <Pressable
-              style={styles.retryButton}
-              onPress={() => loadCategoryItems(activeCategory, lang, true)}
-            >
-              <Ionicons name="refresh" size={16} color={THEME.colors.textPrimary} />
-              <Text style={styles.retryButtonText}>
-                {lang === 'es' ? 'REINTENTAR ACCESO' : 'RETRY ACCESS'}
-              </Text>
-            </Pressable>
-          </View>
+          <EmptyState
+            icon="cloud-offline-outline"
+            title={lang === 'es' ? 'No se pudo cargar el archivo' : 'Archive could not be loaded'}
+            description={error}
+            actionLabel={lang === 'es' ? 'Reintentar' : 'Retry'}
+            onAction={() => loadCategoryItems(activeCategory, lang, true)}
+            tint={THEME.colors.accentRed}
+          />
         ) : loading && !refreshing ? (
-          <View style={styles.centerContainer}>
-            <ActivityIndicator size="large" color={activeCategory.color} />
-            <Text style={styles.loadingText}>
-              {lang === 'es'
-                ? `ACCEDIENDO A ARCHIVO // ${activeCategory.titleEs.toUpperCase()}...`
-                : `ACCESSING ARCHIVE // ${activeCategory.title.toUpperCase()}...`}
-            </Text>
-          </View>
+          <LoadingState
+            tint={activeCategory.color}
+            message={lang === 'es' ? `Abriendo archivo · ${activeCategory.titleEs}` : `Opening archive · ${activeCategory.title}`}
+          />
         ) : (
           <>
             {error && items.length > 0 && (
@@ -397,21 +398,16 @@ export default function LibraryScreen() {
               windowSize={5}
               removeClippedSubviews={Platform.OS === 'android'}
               ListEmptyComponent={
-                <View style={styles.centerContainer}>
-                  <Ionicons name="folder-open-outline" size={44} color={THEME.colors.textMuted} />
-                  <Text style={styles.emptyTitle}>
-                    {lang === 'es' ? 'SIN EXPEDIENTES ENCONTRADOS' : 'NO DOSSIERS FOUND'}
-                  </Text>
-                  <Text style={styles.emptySub}>
-                    {search
-                      ? lang === 'es'
-                        ? 'No hay registros que coincidan con la búsqueda.'
-                        : 'No records match the current search.'
-                      : lang === 'es'
-                      ? 'No se encontraron expedientes en este módulo de la biblioteca.'
-                      : 'No dossiers located in this library archive module.'}
-                  </Text>
-                </View>
+                <EmptyState
+                  icon="folder-open-outline"
+                  title={lang === 'es' ? 'No hay expedientes' : 'No dossiers found'}
+                  description={search
+                    ? lang === 'es' ? 'No hay registros que coincidan con la búsqueda.' : 'No records match the current search.'
+                    : lang === 'es' ? 'No se encontraron expedientes en esta categoría.' : 'No dossiers were found in this category.'}
+                  actionLabel={search || readFilter !== 'all' ? (lang === 'es' ? 'Limpiar filtros' : 'Clear filters') : undefined}
+                  onAction={search || readFilter !== 'all' ? () => { setSearch(''); setReadFilter('all'); } : undefined}
+                  tint={activeCategory.color}
+                />
               }
             />
           </>
@@ -464,6 +460,12 @@ export default function LibraryScreen() {
           )}
         </View>
       )}
+
+      <SyncModal
+        visible={showSyncModal}
+        onClose={() => setShowSyncModal(false)}
+        lang={lang}
+      />
     </View>
   );
 }
@@ -496,6 +498,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   langToggleWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  syncHeaderBtn: {
+    padding: 6,
+    borderRadius: THEME.radius.sm,
+    backgroundColor: THEME.colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: THEME.colors.surfaceBorder,
+    alignItems: 'center',
     justifyContent: 'center',
   },
   categoriesSection: {
@@ -505,7 +519,7 @@ const styles = StyleSheet.create({
   },
   categoriesContent: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     gap: 6,
   },
   catChip: {
@@ -513,7 +527,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    minHeight: THEME.touch.min,
+    paddingVertical: 8,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: THEME.colors.surfaceBorder,
@@ -538,7 +553,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.surfaceBorder,
     padding: 2,
-    height: 34,
+    height: 40,
   },
   readFilterButton: {
     flex: 1,
@@ -553,7 +568,7 @@ const styles = StyleSheet.create({
   },
   readFilterButtonText: {
     fontFamily: THEME.fonts.mono,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '600',
     color: THEME.colors.textMuted,
     letterSpacing: 0.5,

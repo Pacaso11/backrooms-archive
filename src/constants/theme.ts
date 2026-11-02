@@ -2,17 +2,17 @@ import { ReaderFontSize, ReaderThemeMode } from '../types/wikidot';
 
 export const THEME = {
   colors: {
-    background: '#090c10',
-    backgroundSecondary: '#0f141d',
-    surface: '#151b26',
-    surfaceHighlight: '#1e2638',
-    surfaceBorder: '#273248',
+    background: '#080b10',
+    backgroundSecondary: '#10151e',
+    surface: '#151c27',
+    surfaceHighlight: '#202a39',
+    surfaceBorder: '#303d50',
     surfaceBorderActive: '#f59e0b',
-    
+
     textPrimary: '#f1f5f9',
-    textSecondary: '#94a3b8',
-    textMuted: '#64748b',
-    
+    textSecondary: '#a8b4c5',
+    textMuted: '#8492a6',
+
     // M.E.G. Terminal accents
     accentAmber: '#f59e0b',
     accentGreen: '#10b981',
@@ -22,6 +22,10 @@ export const THEME = {
     // Classified stamps
     classifiedRed: '#dc2626',
     stampBorder: '#ef444466',
+    success: '#34d399',
+    warning: '#fbbf24',
+    danger: '#fb7185',
+    focusRing: '#fbbf24',
   },
   
   fonts: {
@@ -32,17 +36,31 @@ export const THEME = {
   spacing: {
     xs: 4,
     sm: 8,
-    md: 14,
-    lg: 20,
-    xl: 28,
+    md: 12,
+    lg: 16,
+    xl: 24,
+    xxl: 32,
   },
 
   radius: {
-    sm: 6,
-    md: 10,
-    lg: 16,
+    sm: 8,
+    md: 12,
+    lg: 18,
     full: 9999,
-  }
+  },
+
+  type: {
+    caption: 12,
+    label: 13,
+    body: 16,
+    bodyLine: 26,
+    title: 20,
+    display: 30,
+  },
+
+  touch: {
+    min: 44,
+  },
 };
 
 export const READER_THEMES: Record<ReaderThemeMode, {

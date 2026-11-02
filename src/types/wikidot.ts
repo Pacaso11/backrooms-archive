@@ -87,6 +87,7 @@ export interface WikiListItem {
   lang?: 'es' | 'en';
   previewClass?: string;
   snippet?: string;
+  imageUrl?: string;
   tags?: string[];
 }
 
@@ -109,4 +110,19 @@ export type ReaderFontSize = 'compact' | 'normal' | 'large' | 'huge';
 export interface ReaderSettings {
   theme: ReaderThemeMode;
   fontSize: ReaderFontSize;
+}
+
+export type SyncPackageType = 'essentials' | 'cluster_1' | 'favorites' | 'full';
+
+export type SyncStatus = 'idle' | 'running' | 'paused' | 'completed' | 'cancelled' | 'error';
+
+export interface SyncProgress {
+  packageType: SyncPackageType;
+  status: SyncStatus;
+  total: number;
+  current: number;
+  currentTitle: string;
+  errorsCount: number;
+  approxBytes: number;
+  message?: string;
 }

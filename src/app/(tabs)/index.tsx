@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  ActivityIndicator,
   RefreshControl,
   Pressable,
   Platform,
@@ -20,6 +19,7 @@ import { SearchBar } from '../../components/SearchBar';
 import { DossierView } from '../../components/DossierView';
 import { LanguageToggle } from '../../components/LanguageToggle';
 import { ResumeReadingBanner } from '../../components/ResumeReadingBanner';
+import { EmptyState, LoadingState } from '../../components/ScreenStates';
 import { HazardFilterBar, HazardFilter } from '../../components/HazardFilterBar';
 import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
@@ -64,7 +64,7 @@ export default function LevelsScreen() {
       const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
-        const cached = await StorageService.getCachedIndex('levels');
+        const cached = await StorageService.getCachedIndex('levels', currentLang);
         if (cached && cached.length > 0) {
           setLevels(cached);
           setLoading(false);
@@ -73,7 +73,7 @@ export default function LevelsScreen() {
 
       const fetched = await WikidotService.fetchLevels(currentLang);
       setLevels(fetched);
-      await StorageService.saveIndexToCache('levels', fetched);
+      await StorageService.saveIndexToCache('levels', fetched, currentLang);
     } catch (err) {
       console.warn('Could not fetch levels:', err);
     } finally {
@@ -407,18 +407,22 @@ export default function LevelsScreen() {
         </View>
 
         {loading && levels.length === 0 ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="small" color={THEME.colors.accentAmber} />
-            <Text style={styles.loadingText}>
-              {lang === 'es' ? 'Sincronizando Archivo de Niveles...' : 'Syncing Wikidot Level Index...'}
-            </Text>
-          </View>
+          <LoadingState message={lang === 'es' ? 'Cargando niveles' : 'Loading levels'} />
         ) : (
           <FlatList
             data={filteredLevels}
             keyExtractor={keyExtractor}
             renderItem={renderLevelItem}
             contentContainerStyle={styles.listContent}
+            ListEmptyComponent={(
+              <EmptyState
+                icon="search-outline"
+                title={lang === 'es' ? 'No hay niveles con estos filtros' : 'No levels match these filters'}
+                description={lang === 'es' ? 'Prueba otra búsqueda o quita los filtros activos.' : 'Try another search or clear the active filters.'}
+                actionLabel={lang === 'es' ? 'Limpiar filtros' : 'Clear filters'}
+                onAction={() => { setSearch(''); setReadFilter('all'); setHazardFilter('all'); }}
+              />
+            )}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -468,7 +472,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: 12,
+    paddingTop: 8,
     paddingBottom: 4,
     gap: 8,
   },
@@ -476,8 +480,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   controlIconBtn: {
-    width: 38,
-    height: 38,
+    width: THEME.touch.min,
+    height: THEME.touch.min,
     borderRadius: THEME.radius.md,
     backgroundColor: THEME.colors.surface,
     borderWidth: 1,
@@ -509,7 +513,7 @@ const styles = StyleSheet.create({
     padding: 2.5,
     borderWidth: 1,
     borderColor: '#1e293b',
-    height: 34,
+    height: 40,
   },
   segmentTab: {
     flex: 1,
@@ -524,7 +528,7 @@ const styles = StyleSheet.create({
   },
   segmentTabText: {
     fontFamily: THEME.fonts.mono,
-    fontSize: 9.5,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#64748b',
     letterSpacing: 0.2,
@@ -642,7 +646,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.surfaceBorder,
   },

@@ -44,19 +44,19 @@ export function SurvivalBadge({ classification, lang = 'es' }: SurvivalBadgeProp
   const entityCount = !isPlaceholder(classification.entityCount) ? classification.entityCount : fallback.entityCount;
 
   return (
-    <View style={[styles.container, { borderColor: color }]}>
+    <View style={[styles.container, { borderColor: `${color}88` }]}>
       {/* Top Banner */}
-      <View style={[styles.topBanner, { backgroundColor: color }]}>
+      <View style={[styles.topBanner, { backgroundColor: `${color}18` }]}>
         <View style={styles.diamondWrapper}>
-          <View style={styles.diamond}>
-            <Ionicons name="warning" size={14} color="#000" />
+          <View style={[styles.diamond, { backgroundColor: `${color}30` }]}>
+            <Ionicons name="warning" size={14} color={color} />
           </View>
         </View>
         <View style={styles.bannerTextCol}>
           <Text style={styles.bannerSub}>
             {lang === 'es' ? 'DIFICULTAD DE SUPERVIVENCIA:' : 'SURVIVAL DIFFICULTY:'}
           </Text>
-          <Text style={styles.bannerTitle}>{label}</Text>
+          <Text style={[styles.bannerTitle, { color }]}>{label}</Text>
         </View>
       </View>
 
@@ -91,7 +91,7 @@ const styles = StyleSheet.create({
   container: {
     marginVertical: THEME.spacing.md,
     borderRadius: THEME.radius.md,
-    borderWidth: 1.5,
+    borderWidth: 1,
     backgroundColor: THEME.colors.surface,
     overflow: 'hidden',
   },
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
   diamond: {
     width: 26,
     height: 26,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
     transform: [{ rotate: '45deg' }],
     alignItems: 'center',
     justifyContent: 'center',
@@ -120,14 +120,14 @@ const styles = StyleSheet.create({
     fontFamily: THEME.fonts.mono,
     fontSize: 9,
     fontWeight: '800',
-    color: '#000000',
+    color: THEME.colors.textSecondary,
     letterSpacing: 1.5,
   },
   bannerTitle: {
     fontFamily: THEME.fonts.mono,
     fontSize: 16,
     fontWeight: '900',
-    color: '#000000',
+    color: THEME.colors.textPrimary,
     letterSpacing: 1,
   },
   traitsContainer: {

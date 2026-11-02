@@ -155,19 +155,19 @@ describe('Requirement R4: Global Language Sync, Lore-Accurate Danger Classificat
     test('getEntityTags does not fabricate danger or behavior tags based on entity numbers', () => {
       const ent1Tags = getEntityTags('1', undefined, 'es');
       assert.ok(!ent1Tags.includes('Biología Anómala'));
-      assert.deepStrictEqual(ent1Tags, ['Entidad', 'M.E.G. Log']);
+      assert.deepStrictEqual(ent1Tags, ['Entidad', 'Registro M.E.G.']);
 
       const ent3Tags = getEntityTags('3', undefined, 'es');
       assert.ok(!ent3Tags.includes('Hostil'));
-      assert.deepStrictEqual(ent3Tags, ['Entidad', 'M.E.G. Log']);
+      assert.deepStrictEqual(ent3Tags, ['Entidad', 'Registro M.E.G.']);
 
       const ent4Tags = getEntityTags('4', undefined, 'es');
       assert.ok(!ent4Tags.includes('Neutral / Pasivo'));
-      assert.deepStrictEqual(ent4Tags, ['Entidad', 'M.E.G. Log']);
+      assert.deepStrictEqual(ent4Tags, ['Entidad', 'Registro M.E.G.']);
 
       const ent10Tags = getEntityTags('10', undefined, 'es');
       assert.ok(!ent10Tags.includes('Fauna Anómala'));
-      assert.deepStrictEqual(ent10Tags, ['Entidad', 'M.E.G. Log']);
+      assert.deepStrictEqual(ent10Tags, ['Entidad', 'Registro M.E.G.']);
     });
   });
 

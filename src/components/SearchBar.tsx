@@ -22,6 +22,9 @@ export function SearchBar({ value, onChangeText, placeholder = 'Search by name, 
         placeholderTextColor={THEME.colors.textMuted}
         autoCorrect={false}
         autoCapitalize="none"
+        accessibilityRole="search"
+        returnKeyType="search"
+        clearButtonMode="never"
       />
       {value.length > 0 && (
         <Pressable
@@ -45,15 +48,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: THEME.colors.surfaceBorder,
     borderRadius: THEME.radius.md,
-    paddingHorizontal: 12,
-    height: 44,
+    paddingHorizontal: 14,
+    height: 48,
   },
   searchIcon: {
     marginRight: 8,
   },
   input: {
     flex: 1,
-    fontSize: 14,
+    fontSize: THEME.type.body,
     color: THEME.colors.textPrimary,
     paddingVertical: 0,
   },

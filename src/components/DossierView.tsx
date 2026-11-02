@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   RefreshControl,
+  Share,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { BackroomsItem, ItemCategory, ReaderSettings } from '../types/wikidot';
@@ -22,6 +24,7 @@ import { ReaderSettingsModal } from './ReaderSettingsModal';
 import { NoclipText } from './NoclipText';
 import { READER_FONT_SIZES, READER_THEMES, THEME } from '../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { useLanguage } from '../context/LanguageContext';
 
 interface DossierViewProps {
   path: string;
@@ -39,6 +42,7 @@ export function DossierView({
   onNavigateNoclip,
 }: DossierViewProps) {
   const router = useRouter();
+  const { language: appLanguage, setLanguage: setAppLanguage } = useLanguage();
   const scrollViewRef = useRef<ScrollView>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -47,7 +51,7 @@ export function DossierView({
   const [error, setError] = useState<string | null>(null);
   const [isFavorite, setIsFavorite] = useState(false);
   const [isRead, setIsRead] = useState(false);
-  const [lang, setLang] = useState<'es' | 'en'>('es');
+  const [lang, setLang] = useState<'es' | 'en'>(appLanguage);
 
   // Reader Customization Settings
   const [readerSettings, setReaderSettings] = useState<ReaderSettings>({
@@ -59,13 +63,26 @@ export function DossierView({
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Interactive Reader Additions (Pillar 1)
+  const [readingProgress, setReadingProgress] = useState(0);
+  const [lightboxImageIndex, setLightboxImageIndex] = useState<number | null>(null);
+  const [tocModalVisible, setTocModalVisible] = useState(false);
+  const sectionCoordinates = useRef<Record<string, number>>({});
+
   // Scroll memory
   const initialScrollRestored = useRef(false);
+  const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingScrollRestore = useRef<number | null>(null);
+  const latestScrollSession = useRef<Parameters<typeof StorageService.saveLastReadSession>[0] | null>(null);
 
   // Cleanup pending network request on unmount
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
+      if (scrollSaveTimer.current) {
+        clearTimeout(scrollSaveTimer.current);
+        if (latestScrollSession.current) StorageService.saveLastReadSession(latestScrollSession.current);
+      }
     };
   }, []);
 
@@ -104,7 +121,9 @@ export function DossierView({
         if (abortController.signal.aborted) return;
         setReaderSettings(settings);
 
-        const cleanId = path.replace(/\//g, '');
+        const cleanId = path.replace(/^\/+|\/+$/g, '');
+        await StorageService.recordHistory(cleanId);
+        if (abortController.signal.aborted) return;
 
         // 1. Check local offline cache first (if not forcing fresh download)
         if (!forceRefresh) {
@@ -141,6 +160,23 @@ export function DossierView({
         if (abortController.signal.aborted) return;
         setItem(fetched);
 
+        // Keep the resume banner in the selected language after refreshing a dossier.
+        void StorageService.getLastReadSession().then(session => {
+          if (!session || session.id !== fetched.id || abortController.signal.aborted) return;
+          const cleanSub = fetched.subTitle
+            ? fetched.subTitle.replace(/^['"«»“”„\s\-–—]+|['"«»“”„\s\-–—]+$/g, '').trim()
+            : '';
+          const localizedSession = {
+            ...session,
+            title: fetched.title,
+            subTitle: cleanSub || undefined,
+            displayName: cleanSub ? `${fetched.title} - "${cleanSub}"` : fetched.title,
+            lang: currentLang,
+          };
+          latestScrollSession.current = localizedSession;
+          return StorageService.saveLastReadSession(localizedSession);
+        }).catch(() => {});
+
         // Save to cache for offline reading (never mutate fetched.id)
         await StorageService.saveItemToCache(fetched, currentLang);
       } catch (err: any) {
@@ -164,26 +200,32 @@ export function DossierView({
 
   const handleToggleRead = async () => {
     if (!item) return;
-    const cleanId = path.replace(/\//g, '');
+    const cleanId = path.replace(/^\/+|\/+$/g, '');
     const nextStatus = await StorageService.toggleRead(cleanId);
     setIsRead(nextStatus);
   };
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadData(appLanguage);
+  }, [loadData, appLanguage]);
 
   // Restore scroll position when item finishes loading
   useEffect(() => {
     if (item && !initialScrollRestored.current) {
       initialScrollRestored.current = true;
+      let cancelled = false;
       StorageService.getLastReadSession().then(session => {
-        if (session && session.path === path && session.scrollY > 50) {
-          setTimeout(() => {
-            scrollViewRef.current?.scrollTo({ y: session.scrollY, animated: true });
-          }, 350);
+        if (!cancelled && session && session.path === path && session.scrollY > 50) {
+          pendingScrollRestore.current = session.scrollY;
+          requestAnimationFrame(() => {
+            if (!cancelled && pendingScrollRestore.current !== null) {
+              scrollViewRef.current?.scrollTo({ y: pendingScrollRestore.current, animated: false });
+              pendingScrollRestore.current = null;
+            }
+          });
         }
       });
+      return () => { cancelled = true; };
     }
   }, [item, path]);
 
@@ -193,13 +235,14 @@ export function DossierView({
     const scrollY = contentOffset.y;
     const maxScroll = Math.max(1, contentSize.height - layoutMeasurement.height);
     const scrollPercent = Math.min(100, Math.max(0, (scrollY / maxScroll) * 100));
+    setReadingProgress(scrollPercent);
 
     const cleanSub = item.subTitle
       ? item.subTitle.replace(/^["'«»“”„\s\-–—]+|["'«»“”„\s\-–—]+$/g, '').trim()
       : '';
 
     // Persist last read session
-    StorageService.saveLastReadSession({
+    const session: Parameters<typeof StorageService.saveLastReadSession>[0] = {
       id: item.id,
       path: item.path,
       title: item.title,
@@ -210,14 +253,82 @@ export function DossierView({
       scrollPercent,
       lang,
       timestamp: Date.now(),
-    });
+    };
+    latestScrollSession.current = session;
+    if (scrollSaveTimer.current) clearTimeout(scrollSaveTimer.current);
+    scrollSaveTimer.current = setTimeout(() => {
+      StorageService.saveLastReadSession(session);
+      scrollSaveTimer.current = null;
+    }, 500);
+  };
+
+  const tocSections = useMemo(() => {
+    if (!item) return [];
+    const list: { id: string; title: string; icon: keyof typeof Ionicons.glyphMap }[] = [];
+    if (item.prologue) {
+      list.push({ id: 'prologue', title: lang === 'es' ? 'Registro Inicial' : 'Prologue', icon: 'journal-outline' });
+    }
+    if (item.description) {
+      list.push({ id: 'description', title: lang === 'es' ? 'Descripción' : 'Description', icon: 'reader-outline' });
+    }
+    if (item.tabs && item.tabs.length > 0) {
+      list.push({ id: 'tabs', title: lang === 'es' ? 'Registros de Archivo' : 'Archive Tabs', icon: 'layers-outline' });
+    }
+    if (item.sections && item.sections.length > 0) {
+      item.sections.forEach((sec, idx) => {
+        const isBodyMarker = /^(?:registro de datos|body|cuerpo)$/i.test(sec.title.trim());
+        if (sec.title.trim() && !isBodyMarker) {
+          const cleanTitle = sec.title.replace(/^###\s*⚔\s*(?:SAGA:)?\s*|^###\s*📂\s*(?:REGISTRO DESPLEGABLE:)?\s*/i, '').trim();
+          list.push({ id: `section-${idx}`, title: cleanTitle, icon: 'document-text-outline' });
+        }
+      });
+    }
+    if (item.entrances && item.entrances.length > 0) {
+      list.push({ id: 'entrances', title: lang === 'es' ? 'Entradas' : 'Entrances', icon: 'log-in-outline' });
+    }
+    if (item.exits && item.exits.length > 0) {
+      list.push({ id: 'exits', title: lang === 'es' ? 'Salidas' : 'Exits', icon: 'log-out-outline' });
+    }
+    if (item.epilogue) {
+      list.push({ id: 'epilogue', title: lang === 'es' ? 'Epílogo' : 'Epilogue', icon: 'bookmark-outline' });
+    }
+    return list;
+  }, [item, lang]);
+
+  const scrollToSection = (id: string) => {
+    setTocModalVisible(false);
+    const targetY = sectionCoordinates.current[id];
+    if (typeof targetY === 'number') {
+      scrollViewRef.current?.scrollTo({ y: Math.max(0, targetY - 12), animated: true });
+    }
+  };
+
+  const handleShare = async () => {
+    if (!item) return;
+    try {
+      const shareUrl = item.url || `https://es-backrooms-wiki.wikidot.com${item.path}`;
+      const snippet = item.description ? item.description.slice(0, 140) + '...' : '';
+      await Share.share({
+        title: item.title,
+        message: `${item.title}${item.subTitle ? ` - "${item.subTitle}"` : ''}\n\n${snippet}\n\n${shareUrl}`,
+        url: shareUrl,
+      });
+    } catch (err) {
+      console.warn('Share error:', err);
+    }
+  };
+
+  const restoreScrollAfterLayout = () => {
+    if (pendingScrollRestore.current !== null) {
+      scrollViewRef.current?.scrollTo({ y: pendingScrollRestore.current, animated: false });
+      pendingScrollRestore.current = null;
+    }
   };
 
   const handleSwitchLanguage = async (newLang: 'es' | 'en') => {
     if (newLang === lang) return;
     setLang(newLang);
-    await StorageService.setLanguage(newLang);
-    loadData(newLang);
+    await setAppLanguage(newLang);
   };
 
   const handleUpdateReaderSettings = async (newSettings: ReaderSettings) => {
@@ -242,7 +353,8 @@ export function DossierView({
     if (onNavigateNoclip) {
       onNavigateNoclip(targetPath, targetCategory);
     } else {
-      router.push(`/dossier/${targetPath.replace('/', '')}?category=${targetCategory}`);
+      const dossierPath = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
+      router.push(`/dossier${dossierPath}?category=${targetCategory}`);
     }
   };
 
@@ -286,12 +398,18 @@ export function DossierView({
 
   return (
     <View style={[styles.outerWrapper, { backgroundColor: activeTheme.background }]}>
+      {/* Top Reading Progress Bar (Amber / Retro) */}
+      <View style={[styles.progressBarTrack, { backgroundColor: `${activeTheme.surfaceBorder}44` }]}>
+        <View style={[styles.progressBarFill, { width: `${readingProgress}%`, backgroundColor: activeTheme.accent }]} />
+      </View>
+
       <ScrollView
         ref={scrollViewRef}
         style={styles.container}
         contentContainerStyle={styles.contentContainer}
+        onContentSizeChange={restoreScrollAfterLayout}
         onScroll={handleScroll}
-        scrollEventThrottle={300}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -303,7 +421,7 @@ export function DossierView({
         {/* Top Bar with Back, Reader Settings, Language Toggle, and Actions */}
         <View style={styles.topActionsBar}>
           {showBackButton && onBack ? (
-            <Pressable style={[styles.backBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]} onPress={onBack}>
+              <Pressable style={[styles.backBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]} onPress={onBack} accessibilityRole="button" accessibilityLabel={lang === 'es' ? 'Volver al índice' : 'Back to index'}>
               <Ionicons name="arrow-back" size={18} color={activeTheme.textPrimary} />
               <Text style={[styles.backBtnText, { color: activeTheme.textPrimary }]}>{lang === 'es' ? 'ÍNDICE' : 'INDEX'}</Text>
             </Pressable>
@@ -315,7 +433,12 @@ export function DossierView({
             </View>
           )}
 
-          <View style={styles.rightIcons}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.rightIconsScrollView}
+            contentContainerStyle={styles.rightIcons}
+          >
             {/* Mark / Unmark as Read Button */}
             <Pressable
               style={[
@@ -324,6 +447,7 @@ export function DossierView({
                 isRead && styles.actionIconBtnActive,
               ]}
               onPress={handleToggleRead}
+              accessibilityRole="button"
               accessibilityLabel={isRead ? 'Desmarcar como leído' : 'Marcar como leído'}
             >
               <Ionicons
@@ -337,6 +461,8 @@ export function DossierView({
             <Pressable
               style={[styles.actionIconBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
               onPress={() => setSettingsModalVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel={lang === 'es' ? 'Ajustes de lectura: tema y tamaño de texto' : 'Reading settings: theme and text size'}
             >
               <Ionicons name="text-outline" size={18} color={activeTheme.textSecondary} />
             </Pressable>
@@ -350,6 +476,8 @@ export function DossierView({
                 isFavorite && styles.actionIconBtnActive,
               ]}
               onPress={handleToggleFavorite}
+              accessibilityRole="button"
+              accessibilityLabel={isFavorite ? (lang === 'es' ? 'Quitar de guardados' : 'Remove from saved') : (lang === 'es' ? 'Guardar expediente' : 'Save dossier')}
             >
               <Ionicons
                 name={isFavorite ? 'star' : 'star-outline'}
@@ -361,17 +489,30 @@ export function DossierView({
             <Pressable
               style={[styles.actionIconBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
               onPress={() => loadData(undefined, true)}
+              accessibilityRole="button"
+              accessibilityLabel={lang === 'es' ? 'Actualizar expediente' : 'Refresh dossier'}
             >
               <Ionicons name="refresh" size={18} color={activeTheme.textSecondary} />
             </Pressable>
 
             <Pressable
               style={[styles.actionIconBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
+              onPress={handleShare}
+              accessibilityRole="button"
+              accessibilityLabel={lang === 'es' ? 'Compartir expediente' : 'Share dossier'}
+            >
+              <Ionicons name="share-social-outline" size={18} color={activeTheme.textSecondary} />
+            </Pressable>
+
+            <Pressable
+              style={[styles.actionIconBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
               onPress={handleOpenWikidot}
+              accessibilityRole="button"
+              accessibilityLabel={lang === 'es' ? 'Abrir expediente en Wikidot' : 'Open dossier on Wikidot'}
             >
               <Ionicons name="open-outline" size={18} color={activeTheme.textSecondary} />
             </Pressable>
-          </View>
+          </ScrollView>
         </View>
 
         {/* Notice if Auto-Translated or Pending Translation */}
@@ -450,26 +591,79 @@ export function DossierView({
         {/* Survival Difficulty Badge */}
         {item.classification && <SurvivalBadge classification={item.classification} lang={lang} />}
 
-        {/* Primary Image Gallery */}
+        {/* Primary Image Gallery & Lightbox Trigger */}
         {item.images.length > 0 && (
           <View style={[styles.galleryContainer, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}>
-            <Image
-              source={{ uri: item.images[0].url }}
-              style={styles.mainImage}
-              resizeMode="cover"
-            />
+            <Pressable
+              onPress={() => setLightboxImageIndex(0)}
+              style={styles.mainImageTouchArea}
+              accessibilityRole="button"
+              accessibilityLabel={lang === 'es' ? 'Tocar para ver imagen en pantalla completa con zoom' : 'Tap to view full screen image with zoom'}
+            >
+              <Image
+                source={{ uri: item.images[0].url }}
+                style={styles.mainImage}
+                resizeMode="cover"
+              />
+              <View style={styles.imageZoomBadge}>
+                <Ionicons name="expand-outline" size={13} color="#FFF" />
+                <Text style={styles.imageZoomBadgeText}>
+                  {lang === 'es' ? 'ZOOM' : 'ZOOM'}
+                </Text>
+              </View>
+            </Pressable>
             <View style={[styles.imageCaptionBar, { backgroundColor: activeTheme.surfaceHighlight }]}>
               <Ionicons name="camera-outline" size={14} color={activeTheme.textSecondary} />
               <Text style={[styles.imageCaptionText, { color: activeTheme.textSecondary }]}>
-                {lang === 'es' ? 'Evidencia fotográfica oficial (Wikidot)' : 'Official Photographic Evidence (Wikidot)'}
+                {item.images[0].caption || (lang === 'es' ? 'Evidencia fotográfica oficial (Wikidot)' : 'Official Photographic Evidence (Wikidot)')}
               </Text>
             </View>
           </View>
         )}
 
+        {/* Additional Images Strip if multiple photos exist */}
+        {item.images.length > 1 && (
+          <View style={[styles.additionalGallery, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}>
+            <View style={styles.additionalGalleryHeader}>
+              <Ionicons name="images-outline" size={14} color={activeTheme.accent} />
+              <Text style={[styles.additionalGalleryTitle, { color: activeTheme.accent }]}>
+                {lang === 'es' ? `EVIDENCIA FOTOGRÁFICA ADICIONAL (${item.images.length})` : `ADDITIONAL PHOTOGRAPHIC EVIDENCE (${item.images.length})`}
+              </Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryThumbnailsRow}>
+              {item.images.map((img, idx) => (
+                <Pressable
+                  key={idx}
+                  style={[
+                    styles.thumbnailCard,
+                    {
+                      borderColor: lightboxImageIndex === idx ? activeTheme.accent : activeTheme.surfaceBorder,
+                      backgroundColor: activeTheme.surfaceHighlight,
+                    },
+                  ]}
+                  onPress={() => setLightboxImageIndex(idx)}
+                >
+                  <Image source={{ uri: img.url }} style={styles.thumbnailImage} resizeMode="cover" />
+                  <View style={styles.thumbnailCaptionRow}>
+                    <Text numberOfLines={1} style={[styles.thumbnailCaption, { color: activeTheme.textSecondary }]}>
+                      {img.caption || `${lang === 'es' ? 'Foto' : 'Photo'} ${idx + 1}`}
+                    </Text>
+                    <Ionicons name="expand-outline" size={11} color={activeTheme.accent} />
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Atmospheric Prologue / Narrative Intro (Rendered at top as on Wikidot) */}
         {item.prologue ? (
-          <View style={[styles.narrativeBlock, { backgroundColor: activeTheme.surface, borderColor: activeTheme.accent }]}>
+          <View
+            style={[styles.narrativeBlock, { backgroundColor: activeTheme.surface, borderColor: activeTheme.accent }]}
+            onLayout={(e) => {
+              sectionCoordinates.current['prologue'] = e.nativeEvent.layout.y;
+            }}
+          >
             <View style={styles.narrativeHeaderRow}>
               <Ionicons name="journal-outline" size={16} color={activeTheme.accent} />
               <Text style={[styles.narrativeHeaderTitle, { color: activeTheme.accent }]}>
@@ -480,6 +674,7 @@ export function DossierView({
               content={item.prologue}
               fontSize={activeFont.body}
               lineHeight={activeFont.lineHeight}
+              lang={lang}
               textColor={activeTheme.textPrimary}
               onNavigate={handleNavigateNoclip}
             />
@@ -488,7 +683,12 @@ export function DossierView({
 
         {/* Description Body with Noclip Cross-Links */}
         {item.description ? (
-          <View style={styles.sectionBlock}>
+          <View
+            style={styles.sectionBlock}
+            onLayout={(e) => {
+              sectionCoordinates.current['description'] = e.nativeEvent.layout.y;
+            }}
+          >
             <View style={[styles.sectionHeaderRow, { borderBottomColor: activeTheme.surfaceBorder }]}>
               <Text style={[styles.sectionTitle, { fontSize: activeFont.section, color: activeTheme.accent }]}>
                 {lang === 'es' ? 'DESCRIPCIÓN' : 'DESCRIPTION'}
@@ -498,6 +698,7 @@ export function DossierView({
               content={item.description}
               fontSize={activeFont.body}
               lineHeight={activeFont.lineHeight}
+              lang={lang}
               textColor={activeTheme.textPrimary}
               onNavigate={handleNavigateNoclip}
             />
@@ -506,7 +707,12 @@ export function DossierView({
 
         {/* Structured Tabs (YUI Tabviews / Multi-Archive Hubs) */}
         {item.tabs && item.tabs.length > 0 && (
-          <View style={styles.tabsContainer}>
+          <View
+            style={styles.tabsContainer}
+            onLayout={(e) => {
+              sectionCoordinates.current['tabs'] = e.nativeEvent.layout.y;
+            }}
+          >
             <View style={styles.tabsHeader}>
               <Ionicons name="layers-outline" size={14} color={activeTheme.accent} />
               <Text style={[styles.tabsHeaderTitle, { color: activeTheme.accent }]}>
@@ -597,6 +803,7 @@ export function DossierView({
                   content={item.tabs[selectedTabIndex].content}
                   fontSize={activeFont.body}
                   lineHeight={activeFont.lineHeight}
+                  lang={lang}
                   textColor={activeTheme.textPrimary}
                   onNavigate={handleNavigateNoclip}
                 />
@@ -614,6 +821,7 @@ export function DossierView({
                     content={tab.content}
                     fontSize={activeFont.body}
                     lineHeight={activeFont.lineHeight}
+                    lang={lang}
                     textColor={activeTheme.textPrimary}
                     onNavigate={handleNavigateNoclip}
                   />
@@ -625,6 +833,22 @@ export function DossierView({
 
         {/* Other Sections (Sagas, Aberrations, Entities, Outposts, Entrances, Exits, etc.) */}
         {item.sections.map((sec, idx) => {
+          const isBodyMarker = /^(?:registro de datos|body|cuerpo)$/i.test(sec.title.trim());
+          if (!sec.title.trim() || isBodyMarker) {
+            return (
+              <View key={idx} style={styles.sectionBlock}>
+                <NoclipText
+                  content={sec.content}
+                  fontSize={activeFont.body}
+                  lineHeight={activeFont.lineHeight}
+                  lang={lang}
+                  textColor={activeTheme.textPrimary}
+                  onNavigate={handleNavigateNoclip}
+                />
+              </View>
+            );
+          }
+
           const isSaga = sec.title.includes('⚔') || sec.title.toLowerCase().includes('saga');
           const isCollapsible = sec.title.includes('📂') || sec.title.toLowerCase().includes('desplegable');
           const isExpanded = !!expandedAccordions[sec.title];
@@ -658,6 +882,7 @@ export function DossierView({
                     content={sec.content}
                     fontSize={activeFont.body}
                     lineHeight={activeFont.lineHeight}
+                    lang={lang}
                     textColor={activeTheme.textPrimary}
                     onNavigate={handleNavigateNoclip}
                   />
@@ -711,6 +936,7 @@ export function DossierView({
                       content={sec.content}
                       fontSize={activeFont.body - 1}
                       lineHeight={activeFont.lineHeight - 2}
+                      lang={lang}
                       textColor={activeTheme.textPrimary}
                       onNavigate={handleNavigateNoclip}
                     />
@@ -737,6 +963,7 @@ export function DossierView({
                       content={subItems[0].trim()}
                       fontSize={activeFont.body}
                       lineHeight={activeFont.lineHeight}
+                      lang={lang}
                       textColor={activeTheme.textPrimary}
                       onNavigate={handleNavigateNoclip}
                     />
@@ -756,6 +983,7 @@ export function DossierView({
                           content={subBody}
                           fontSize={activeFont.body - 1}
                           lineHeight={activeFont.lineHeight - 2}
+                          lang={lang}
                           textColor={activeTheme.textPrimary}
                           onNavigate={handleNavigateNoclip}
                         />
@@ -768,6 +996,7 @@ export function DossierView({
                   content={sec.content}
                   fontSize={activeFont.body}
                   lineHeight={activeFont.lineHeight}
+                  lang={lang}
                   textColor={activeTheme.textPrimary}
                   onNavigate={handleNavigateNoclip}
                 />
@@ -776,9 +1005,61 @@ export function DossierView({
           );
         })}
 
+        {/* Entrances and Exits Quick Cards */}
+        {((item.entrances && item.entrances.length > 0) || (item.exits && item.exits.length > 0)) && (
+          <View
+            style={styles.quickGrid}
+            onLayout={(e) => {
+              if (item.entrances && item.entrances.length > 0) {
+                sectionCoordinates.current['entrances'] = e.nativeEvent.layout.y;
+              }
+              if (item.exits && item.exits.length > 0) {
+                sectionCoordinates.current['exits'] = e.nativeEvent.layout.y;
+              }
+            }}
+          >
+            {item.entrances && item.entrances.length > 0 && (
+              <View style={[styles.quickCard, styles.entranceCard, { backgroundColor: activeTheme.surface }]}>
+                <View style={styles.quickCardHeader}>
+                  <Ionicons name="log-in" size={14} color="#10b981" />
+                  <Text style={[styles.quickCardTitle, { color: '#10b981' }]}>
+                    {lang === 'es' ? 'ENTRADAS CONOCIDAS' : 'KNOWN ENTRANCES'}
+                  </Text>
+                </View>
+                {item.entrances.map((ent, eIdx) => (
+                  <Text key={eIdx} style={[styles.quickCardItem, { color: activeTheme.textPrimary }]}>
+                    • {ent}
+                  </Text>
+                ))}
+              </View>
+            )}
+
+            {item.exits && item.exits.length > 0 && (
+              <View style={[styles.quickCard, styles.exitCard, { backgroundColor: activeTheme.surface }]}>
+                <View style={styles.quickCardHeader}>
+                  <Ionicons name="log-out" size={14} color="#ef4444" />
+                  <Text style={[styles.quickCardTitle, { color: '#ef4444' }]}>
+                    {lang === 'es' ? 'SALIDAS CONOCIDAS' : 'KNOWN EXITS'}
+                  </Text>
+                </View>
+                {item.exits.map((ex, exIdx) => (
+                  <Text key={exIdx} style={[styles.quickCardItem, { color: activeTheme.textPrimary }]}>
+                    • {ex}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Epilogue / Final Narrative Log (Rendered at end as on Wikidot) */}
         {item.epilogue ? (
-          <View style={[styles.narrativeBlock, styles.epilogueBlock, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}>
+          <View
+            style={[styles.narrativeBlock, styles.epilogueBlock, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
+            onLayout={(e) => {
+              sectionCoordinates.current['epilogue'] = e.nativeEvent.layout.y;
+            }}
+          >
             <View style={styles.narrativeHeaderRow}>
               <Ionicons name="bookmark-outline" size={16} color={activeTheme.accent} />
               <Text style={[styles.narrativeHeaderTitle, { color: activeTheme.textSecondary }]}>
@@ -789,6 +1070,7 @@ export function DossierView({
               content={item.epilogue}
               fontSize={activeFont.body}
               lineHeight={activeFont.lineHeight}
+              lang={lang}
               textColor={activeTheme.textPrimary}
               onNavigate={handleNavigateNoclip}
             />
@@ -805,6 +1087,157 @@ export function DossierView({
           </Text>
         </View>
       </ScrollView>
+
+      {/* Floating Table of Contents Button (Quick Jump) */}
+      {tocSections.length > 1 && (
+        <Pressable
+          style={[styles.floatingTocBtn, { backgroundColor: activeTheme.surface, borderColor: activeTheme.accent }]}
+          onPress={() => setTocModalVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={lang === 'es' ? 'Abrir índice de secciones' : 'Open table of contents'}
+        >
+          <Ionicons name="list" size={16} color={activeTheme.accent} />
+          <Text style={[styles.floatingTocBtnText, { color: activeTheme.accent }]}>
+            {lang === 'es' ? 'ÍNDICE' : 'TOC'}
+          </Text>
+        </Pressable>
+      )}
+
+      {/* Table of Contents Modal */}
+      <Modal
+        visible={tocModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setTocModalVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setTocModalVisible(false)}>
+          <Pressable
+            style={[styles.tocModalSheet, { backgroundColor: activeTheme.surface, borderColor: activeTheme.surfaceBorder }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={[styles.tocModalHeader, { borderBottomColor: activeTheme.surfaceBorder }]}>
+              <View style={styles.tocModalHeaderTitleRow}>
+                <Ionicons name="list-outline" size={18} color={activeTheme.accent} />
+                <Text style={[styles.tocModalHeaderTitle, { color: activeTheme.accent }]}>
+                  {lang === 'es' ? 'ÍNDICE DE SECCIONES M.E.G.' : 'M.E.G. DOSSIER SECTIONS'}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setTocModalVisible(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={20} color={activeTheme.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.tocSectionsList} contentContainerStyle={styles.tocSectionsListContent}>
+              {tocSections.map((sec: { id: string; title: string; icon: keyof typeof Ionicons.glyphMap }) => (
+                <Pressable
+                  key={sec.id}
+                  style={[
+                    styles.tocItemRow,
+                    { borderBottomColor: `${activeTheme.surfaceBorder}44` },
+                  ]}
+                  onPress={() => scrollToSection(sec.id)}
+                >
+                  <View style={styles.tocItemLeft}>
+                    <Ionicons name={sec.icon} size={16} color={activeTheme.accent} />
+                    <Text numberOfLines={1} style={[styles.tocItemText, { color: activeTheme.textPrimary }]}>
+                      {sec.title}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={14} color={activeTheme.textSecondary} />
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Fullscreen Lightbox Modal with Pinch-To-Zoom */}
+      {lightboxImageIndex !== null && item.images.length > 0 && (
+        <Modal
+          visible={true}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setLightboxImageIndex(null)}
+        >
+          <View style={styles.lightboxOverlay}>
+            <View style={styles.lightboxHeader}>
+              <View style={styles.lightboxCounterBadge}>
+                <Text style={styles.lightboxCounterText}>
+                  {`EVIDENCIA ${lightboxImageIndex + 1} / ${item.images.length}`}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.lightboxCloseBtn}
+                onPress={() => setLightboxImageIndex(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar visor de imagen"
+              >
+                <Ionicons name="close" size={26} color="#FFF" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              style={styles.lightboxScrollView}
+              contentContainerStyle={styles.lightboxScrollContent}
+              maximumZoomScale={3}
+              minimumZoomScale={1}
+              showsHorizontalScrollIndicator={false}
+              showsVerticalScrollIndicator={false}
+              centerContent={true}
+            >
+              <Image
+                source={{ uri: item.images[lightboxImageIndex].url }}
+                style={styles.lightboxImage}
+                resizeMode="contain"
+              />
+            </ScrollView>
+
+            <View style={styles.lightboxFooter}>
+              {item.images[lightboxImageIndex].caption ? (
+                <Text style={styles.lightboxCaptionText}>
+                  {item.images[lightboxImageIndex].caption}
+                </Text>
+              ) : null}
+
+              {item.images.length > 1 && (
+                <View style={styles.lightboxNavRow}>
+                  <Pressable
+                    style={[
+                      styles.lightboxNavBtn,
+                      lightboxImageIndex === 0 && styles.lightboxNavBtnDisabled,
+                    ]}
+                    disabled={lightboxImageIndex === 0}
+                    onPress={() => setLightboxImageIndex(prev => (prev !== null && prev > 0 ? prev - 1 : prev))}
+                  >
+                    <Ionicons name="chevron-back" size={22} color={lightboxImageIndex === 0 ? '#555' : '#FFF'} />
+                    <Text style={[styles.lightboxNavBtnText, { color: lightboxImageIndex === 0 ? '#555' : '#FFF' }]}>
+                      {lang === 'es' ? 'ANTERIOR' : 'PREV'}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={[
+                      styles.lightboxNavBtn,
+                      lightboxImageIndex === item.images.length - 1 && styles.lightboxNavBtnDisabled,
+                    ]}
+                    disabled={lightboxImageIndex === item.images.length - 1}
+                    onPress={() => setLightboxImageIndex(prev => (prev !== null && prev < item.images.length - 1 ? prev + 1 : prev))}
+                  >
+                    <Text style={[styles.lightboxNavBtnText, { color: lightboxImageIndex === item.images.length - 1 ? '#555' : '#FFF' }]}>
+                      {lang === 'es' ? 'SIGUIENTE' : 'NEXT'}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={22} color={lightboxImageIndex === item.images.length - 1 ? '#555' : '#FFF'} />
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Reader Settings Modal */}
       <ReaderSettingsModal
@@ -825,7 +1258,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    padding: THEME.spacing.lg,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+    paddingHorizontal: THEME.spacing.md,
+    paddingTop: THEME.spacing.sm,
     paddingBottom: 48,
   },
   centerContainer: {
@@ -882,7 +1319,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: THEME.spacing.md,
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     gap: 8,
   },
   backBtn: {
@@ -916,16 +1353,20 @@ const styles = StyleSheet.create({
     color: THEME.colors.classifiedRed,
     letterSpacing: 1.2,
   },
+  rightIconsScrollView: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
   rightIcons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexShrink: 0,
-    flexWrap: 'wrap',
+    paddingRight: 2,
   },
   actionIconBtn: {
-    width: 34,
-    height: 34,
+    width: THEME.touch.min,
+    height: THEME.touch.min,
     borderRadius: THEME.radius.sm,
     borderWidth: 1,
     alignItems: 'center',
@@ -1266,5 +1707,254 @@ const styles = StyleSheet.create({
   footerNoticeText: {
     fontSize: 11,
     fontStyle: 'italic',
+  },
+  // --- Progress Bar ---
+  progressBarTrack: {
+    width: '100%',
+    height: 3,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 99,
+  },
+  progressBarFill: {
+    height: '100%',
+  },
+  // --- Gallery & Lightbox ---
+  mainImageTouchArea: {
+    position: 'relative',
+    width: '100%',
+  },
+  imageZoomBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: '#000000B0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    borderColor: '#FFFFFF44',
+  },
+  imageZoomBadgeText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#FFF',
+    letterSpacing: 0.8,
+  },
+  additionalGallery: {
+    marginVertical: THEME.spacing.md,
+    borderRadius: THEME.radius.md,
+    borderWidth: 1,
+    padding: 12,
+  },
+  additionalGalleryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  additionalGalleryTitle: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  galleryThumbnailsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  thumbnailCard: {
+    width: 140,
+    borderRadius: THEME.radius.sm,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: 88,
+    backgroundColor: '#1b2234',
+  },
+  thumbnailCaptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    gap: 4,
+  },
+  thumbnailCaption: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9.5,
+    flex: 1,
+  },
+  // --- Floating TOC Button & Modal ---
+  floatingTocBtn: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: THEME.radius.full,
+    borderWidth: 1.5,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    zIndex: 90,
+  },
+  floatingTocBtnText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  tocModalSheet: {
+    maxHeight: '70%',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingBottom: 28,
+  },
+  tocModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+  },
+  tocModalHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tocModalHeaderTitle: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  tocSectionsList: {
+    paddingHorizontal: 16,
+  },
+  tocSectionsListContent: {
+    paddingVertical: 6,
+  },
+  tocItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  tocItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  tocItemText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  // --- Fullscreen Lightbox Modal ---
+  lightboxOverlay: {
+    flex: 1,
+    backgroundColor: '#000000FA',
+    justifyContent: 'space-between',
+  },
+  lightboxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 48,
+    paddingBottom: 12,
+    zIndex: 10,
+  },
+  lightboxCounterBadge: {
+    backgroundColor: '#FFFFFF22',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  lightboxCounterText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#FFF',
+    letterSpacing: 1,
+  },
+  lightboxCloseBtn: {
+    padding: 6,
+  },
+  lightboxScrollView: {
+    flex: 1,
+  },
+  lightboxScrollContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lightboxFooter: {
+    paddingHorizontal: 18,
+    paddingBottom: 36,
+    paddingTop: 14,
+    backgroundColor: '#0a0d14F0',
+    borderTopWidth: 1,
+    borderTopColor: '#FFFFFF1A',
+  },
+  lightboxCaptionText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 12,
+    color: '#D1D5DB',
+    textAlign: 'center',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  lightboxNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lightboxNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#FFFFFF18',
+    borderRadius: 6,
+  },
+  lightboxNavBtnDisabled: {
+    opacity: 0.3,
+  },
+  lightboxNavBtnText: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
 });

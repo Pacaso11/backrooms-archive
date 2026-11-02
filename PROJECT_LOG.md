@@ -1,7 +1,7 @@
 # 📁 BACKROOMS M.E.G. DOSSIER READER — GUÍA MAESTRA DEL PROYECTO
 
-> **Documento de Referencia Permanente para Desarrolladores y Agentes de IA (Antigravity, OpenCode, Claude, etc.)**  
-> *Última actualización: Octubre 2026 | Versión de la Aplicación: 1.0.0 | Expo SDK: 57.0.30*
+> **Registro de arquitectura y cambios del proyecto**
+> *Estado actual: 29 de octubre de 2026 | Versión de la aplicación: 1.0.1 | Expo SDK: 57.0.31*
 
 ---
 
@@ -17,7 +17,7 @@ La app consume información directamente de las dos ramas oficiales de **Wikidot
 ### Objetivos Clave
 - **Bilingüe con preferencia Española**: Permite alternar entre Inglés y Español instantáneamente mediante un selector global (`ES | EN`).
 - **Nombres Canónicos y Subtítulos**: Muestra siempre el número y el subtítulo oficial o apodo (ej. `Nivel 0 - "Umbral"`, `Entidad 3 - "Sonrientes"` / `Smiler`).
-- **Lectura Offline Total**: Todos los expedientes abiertos se guardan en caché local persistente con `@react-native-async-storage/async-storage`.
+- **Caché local**: Los expedientes visitados se guardan en `@react-native-async-storage/async-storage`; los índices vistos se guardan por idioma. No existe descarga completa de toda la wiki.
 - **Restauración de Progreso de Lectura**: Si el usuario cierra la app o cambia de pantalla leyendo cualquier nivel (ej. Nivel 100 al 65%), al volver o tocar el banner superior "Continuar Lectura", se restaura el nivel exacto y la posición de scroll (`scrollY`).
 - **Motor Noclip (Deep Linking)**: Detecta automáticamente menciones de otros niveles y entidades en el texto (ej. `Nivel 0`, `Entidad 10`) y genera enlaces táctiles que navegan directamente al expediente.
 - **Personalización Tipo Kindle**: Modal `Aa` para cambiar tamaño de letra (Compacta, Normal, Grande, Enorme) y paleta de color (M.E.G. OLED, Archivo Sepia, Midnight Blue).
@@ -31,12 +31,12 @@ La app consume información directamente de las dos ramas oficiales de **Wikidot
 > El cliente móvil del usuario utiliza la app oficial de **Expo Go** descargada de Google Play Store, compatible con **SDK 57** (cliente versión `57.0.9`). Si se actualizan los paquetes a SDK 58, la app dejará de cargar en el móvil con error de versión incompatible.
 
 ### Dependencias Principales (`package.json`)
-- `expo`: `~57.0.30`
-- `expo-router`: `~5.0.0`
-- `react`: `19.1.0`
-- `react-native`: `0.79.5`
-- `@react-native-async-storage/async-storage`: `2.1.2`
-- `@expo/vector-icons`: `^14.0.4`
+- `expo`: `~57.0.31`
+- `expo-router`: `~57.0.29`
+- `react`: `19.2.3`
+- `react-native`: `0.86.3`
+- `@react-native-async-storage/async-storage`: `2.2.0`
+- `@expo/vector-icons`: `^15.0.2`
 - `legacy-peer-deps=true` configurado en `.npmrc` para evitar conflictos de instalación de dependencias en React 19.
 
 ### Comandos de Ejecución y Diagnóstico
@@ -125,7 +125,7 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
 - Algunos niveles (como el Nivel 0.7) existen en Wikidot EN pero dan error 404 en Wikidot ES porque la comunidad aún no los ha traducido.
 - Cuando `lang === 'es'` y la página no existe en Wikidot ES (`isFallback = true`), el servicio activa automáticamente la traducción neural por párrafos (`translateText`), traduciendo título, prólogo, descripción, secciones, epílogo, entradas y salidas.
 - En `DossierView.tsx` se muestra un distintivo informativo: *"Traducción M.E.G. activa. Este expediente no cuenta con traducción oficial en Wikidot ES y ha sido traducido para lectura en español."*
-- El resultado traducido se guarda en caché local con clave `_es`, por lo que las lecturas posteriores son instantáneas y offline.
+- El resultado traducido se guarda junto al expediente en la caché local del idioma solicitado.
 
 ---
 
@@ -133,12 +133,26 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
 
 | Clave de Almacenamiento | Propósito | Formato |
 |---|---|---|
-| `@backrooms_cache_[id]_[lang]_[salt]` | Expediente completo offline (usa sal `v5_canonical` para invalidar versiones truncadas previas) | Objeto JSON `BackroomsItem` |
-| `@backrooms_favorites` | Lista de IDs marcados con estrella | Array de strings |
-| `@backrooms_read_history` | Expedientes ya leídos por el usuario | Array de strings (IDs) |
-| `@backrooms_last_read` | Último expediente leído y posición de scroll | Objeto JSON `LastReadSession` (`scrollY`, `scrollPercent`, `path`) |
-| `@backrooms_lang` | Idioma preferido del usuario | `'es' \| 'en'` |
+| `@backrooms_cached_items_v5_[id]_[lang]` | Expediente visitado para lectura sin conexión | Objeto `BackroomsItem` |
+| `@backrooms_level_index_v1_[lang]`, `@backrooms_entity_index_v1_[lang]` | Índices separados por idioma | Arrays de `WikiListItem` |
+| `@backrooms_library_[category]_v2_[lang]` | Índice de biblioteca por categoría e idioma | Array de `WikiListItem` |
+| `@backrooms_favorites_v1` | Lista de IDs marcados con estrella | Array de strings |
+| `@backrooms_read_items_v1` | IDs cuyo estado está marcado como leído | Array de strings |
+| `@backrooms_history_v1` | Últimas 200 visitas, más recientes primero | Array de IDs |
+| `@backrooms_last_read_v1` | Último expediente leído y posición de scroll | Objeto `LastReadSession` |
+| `@backrooms_language_v1` | Idioma preferido del usuario | `'es' / 'en'` |
 | `@backrooms_reader_settings` | Preferencias de tema y tamaño de fuente | `{ theme: 'meg'\|'sepia'\|'midnight', fontSize: 'compact'\|'normal'\|'large'\|'huge' }` |
+
+> Las secciones anteriores documentan decisiones y cambios históricos. Si una afirmación histórica difiere del código actual, prevalecen `package.json`, `app.json` y la implementación.
+
+## Estado técnico actual (29 de octubre de 2026)
+
+- Expo SDK `~57.0.31`, Expo Router `~57.0.29`, React Native `0.86.3`, React `19.2.3` y TypeScript `~6.0.3`.
+- El lector admite rutas catch-all para slugs de Wikidot con varios segmentos.
+- Los índices en caché se aíslan por idioma; la posición de scroll se guarda con una espera breve y se escribe al desmontar.
+- Las peticiones tienen timeout; la traducción divide párrafos largos, limita la concurrencia a tres y admite cancelación.
+- El historial mantiene las 200 visitas más recientes independientemente del estado leído.
+- Ejecutar `npm test`, `npx expo lint` y `npx tsc --noEmit` para verificar cambios.
 
 *Soporte de Recarga*: `DossierView` incluye `RefreshControl` (arrastrar hacia abajo para refrescar) y botón de actualización en la barra superior para forzar la recarga directa desde Wikidot evitando la caché local.
 
@@ -255,7 +269,7 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
    - **Creación del Repositorio Público**: Repositorio oficial creado bajo la cuenta del autor: [Pacaso11/backrooms-archive](https://github.com/Pacaso11/backrooms-archive).
    - **Documentación y Presentación**: Redacción de un `README.md` con temática táctica M.E.G., insignias de Expo SDK 57, TypeScript, React Native y enlace directo de descarga.
    - **Compilación Limpia en la Nube con EAS Build**: Se vinculó el proyecto oficial `@pacaso11/backrooms` a la infraestructura en la nube de Expo (`fc170f20-442d-4884-80f5-f5ced44ab5d8`) y se compiló el APK de producción/preview en servidores Linux de Expo (AWS).
-   - **Auditoría de Seguridad y Privacidad**: Se escaneó el binario de forma exhaustiva byte a byte, confirmando cero coincidencias de rutas locales (`C:/Users/...`, `16abr` o `d:/IA/...`).
+   - **Auditoría de Seguridad y Privacidad**: Se escaneó el binario de forma exhaustiva byte a byte, confirmando cero coincidencias de rutas locales privadas o identificadores de usuario del sistema.
    - **Lanzamiento v1.0.0 (GitHub Releases)**: Se publicó el binario verificado [Backrooms_Archive_v1.0.0.apk](https://github.com/Pacaso11/backrooms-archive/releases/tag/v1.0.0) para descarga directa de la comunidad.
 
 23. **Resolución Integral de Auditoría Técnica (Fallos P0 y P1 Corregidos al 100%)**:
@@ -285,6 +299,28 @@ El crawler en `wikidotService.ts` resuelve los retos específicos del formato HT
      - `npx tsc --noEmit` superado con 0 errores.
      - `npx expo lint` superado con 0 errores y 0 warnings.
      - Sin compilación de binarios nativos (conforme a la restricción solicitada).
+
+24. **Lanzamiento v1.1.0: Sistema de Sincronización Offline Total, Perfeccionamiento de UX y Hardening de Conexión**:
+   - **Sistema de Archivo Offline Total (`syncService.ts` / `SyncModal.tsx`)**:
+     - Motor de transcripción por lotes modulares con concurrencia controlada (2 hilos simultáneos) y pausas de cortesía (250 ms) para prevenir saturación de Wikidot y bloqueos HTTP 429.
+     - Paquetes tácticos: *Paquete Esencial M.E.G.* (19 archivos), *Cúmulo I* (100 niveles), *Mis Favoritos* y *Archivo M.E.G. Total* (+800 archivos).
+     - Modal táctico en vivo con estética militar M.E.G., barra de porcentaje, visor de log en tiempo real y contador de MB transferidos.
+     - Botón de acceso directo en Biblioteca y en Guardados/Historial.
+   - **Perfeccionamiento Integral de Lectura (`DossierView.tsx`)**:
+     - Barra fija superior de progreso de lectura en tiempo real sincronizada con el scroll.
+     - Visor Lightbox a pantalla completa con soporte táctil para zoom de pellizco (*pinch-to-zoom*) y renderizado de todas las fotos secundarias con sus notas al pie.
+     - Botón flotante `[ÍNDICE]` con menú desplegable táctico para salto rápido (*Quick Jump*) a secciones del artículo.
+     - Botón de compartir nativo (`Share.share`) para enviar enlaces y expedientes a redes externas.
+   - **Mejoras en Exploración y Guardados**:
+     - Filtros de hostilidad en Entidades (`EntityFilterBar.tsx`): Dócil, Neutral, Hostil y Peligro Extremo.
+     - Miniaturas fotográficas tácticas con bordes de fósforo ámbar en tarjetas de niveles y entidades.
+     - Buscador rápido en Favoritos e Historial, botón de purga de historial y medidor de espacio de almacenamiento local con liberación de caché no favorita.
+   - **Hardening de Conectividad Móvil y Expo Go (`start.bat`)**:
+     - Aislamiento de host en Modo Túnel (`REACT_NATIVE_PACKAGER_HOSTNAME` limpio) para garantizar carga fluida con datos móviles 4G/5G.
+     - Eliminación de pausas interactivas en stdin durante la petición del manifiesto en Expo CLI.
+   - **Suite de Pruebas Unitarias & Tipado**:
+     - 94/94 pruebas unitarias pasando con 100% de éxito.
+     - `npx tsc --noEmit` completado con 0 errores.
 
 ---
 

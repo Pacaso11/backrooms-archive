@@ -23,9 +23,9 @@ export default function TabLayout() {
         headerTitleStyle: {
           fontFamily: THEME.fonts.mono,
           fontWeight: '800',
-          fontSize: 16,
+          fontSize: 14,
           color: THEME.colors.textPrimary,
-          letterSpacing: 1,
+          letterSpacing: 0.5,
         },
         tabBarStyle: {
           backgroundColor: THEME.colors.backgroundSecondary,
@@ -38,7 +38,7 @@ export default function TabLayout() {
         tabBarInactiveTintColor: THEME.colors.textMuted,
         tabBarLabelStyle: {
           fontFamily: THEME.fonts.mono,
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: '700',
         },
       }}

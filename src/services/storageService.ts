@@ -5,8 +5,8 @@ export const KEYS = {
   FAVORITES: '@backrooms_favorites_v1',
   CACHED_ITEMS: '@backrooms_cached_items_v5',
   HISTORY: '@backrooms_history_v1',
-  LEVEL_INDEX: '@backrooms_level_index_v1',
-  ENTITY_INDEX: '@backrooms_entity_index_v1',
+  LEVEL_INDEX: '@backrooms_level_index_v3',
+  ENTITY_INDEX: '@backrooms_entity_index_v3',
   LANGUAGE: '@backrooms_language_v1',
   LAST_READ: '@backrooms_last_read_v1',
   READ_ITEMS: '@backrooms_read_items_v1',
@@ -20,6 +20,26 @@ const DEFAULT_READER_SETTINGS: ReaderSettings = {
 
 export class StorageService {
   static readonly KEYS = KEYS;
+  private static readonly mutationQueues = new Map<string, Promise<void>>();
+
+  private static async serializeMutation<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationQueues.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    const tail = previous.catch(() => {}).then(() => current);
+    this.mutationQueues.set(key, tail);
+    try {
+      await previous;
+    } catch {
+      // previous mutation error should not block current operation
+    }
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.mutationQueues.get(key) === tail) this.mutationQueues.delete(key);
+    }
+  }
 
   private static sanitizeId(id: string): string {
     if (!id) return '';
@@ -117,6 +137,41 @@ export class StorageService {
     }
   }
 
+  static async getHistoryIds(): Promise<string[]> {
+    try {
+      const data = await AsyncStorage.getItem(KEYS.HISTORY);
+      if (!data) return [];
+      const history: string[] = JSON.parse(data);
+      return Array.from(new Set(history.map(id => this.sanitizeId(id)).filter(Boolean)));
+    } catch {
+      return [];
+    }
+  }
+
+  static async recordHistory(id: string): Promise<void> {
+    return this.serializeMutation(KEYS.HISTORY, async () => {
+      try {
+        const cleanId = this.sanitizeId(id);
+        if (!cleanId) return;
+        const history = await this.getHistoryIds();
+        const updated = [cleanId, ...history.filter(entry => entry !== cleanId)].slice(0, 200);
+        await AsyncStorage.setItem(KEYS.HISTORY, JSON.stringify(updated));
+      } catch (err) {
+        console.warn('Could not record reading history:', err);
+      }
+    });
+  }
+
+  static async clearHistory(): Promise<void> {
+    return this.serializeMutation(KEYS.HISTORY, async () => {
+      try {
+        await AsyncStorage.removeItem(KEYS.HISTORY);
+      } catch (err) {
+        console.warn('Could not clear reading history:', err);
+      }
+    });
+  }
+
   static async isRead(id: string): Promise<boolean> {
     try {
       const cleanId = this.sanitizeId(id);
@@ -128,46 +183,47 @@ export class StorageService {
   }
 
   static async markAsRead(id: string): Promise<void> {
-    try {
-      const cleanId = this.sanitizeId(id);
-      const reads = await this.getReadIds();
-      if (!reads.includes(cleanId)) {
-        reads.push(cleanId);
-        await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
+    return this.serializeMutation(KEYS.READ_ITEMS, async () => {
+      try {
+        const cleanId = this.sanitizeId(id);
+        const reads = await this.getReadIds();
+        if (!reads.includes(cleanId)) {
+          reads.push(cleanId);
+          await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
+        }
+      } catch (err) {
+        console.warn('Could not mark as read:', err);
       }
-    } catch (err) {
-      console.warn('Could not mark as read:', err);
-    }
+    });
   }
 
   static async unmarkAsRead(id: string): Promise<void> {
-    try {
-      const cleanId = this.sanitizeId(id);
-      let reads = await this.getReadIds();
-      reads = reads.filter(r => r !== cleanId);
-      await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
-    } catch (err) {
-      console.warn('Could not unmark as read:', err);
-    }
+    return this.serializeMutation(KEYS.READ_ITEMS, async () => {
+      try {
+        const cleanId = this.sanitizeId(id);
+        let reads = await this.getReadIds();
+        reads = reads.filter(r => r !== cleanId);
+        await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(reads));
+      } catch (err) {
+        console.warn('Could not unmark as read:', err);
+      }
+    });
   }
 
   static async toggleRead(id: string): Promise<boolean> {
-    try {
-      const cleanId = this.sanitizeId(id);
-      const reads = await this.getReadIds();
-      const exists = reads.includes(cleanId);
-      let updated: string[];
-      if (exists) {
-        updated = reads.filter(r => r !== cleanId);
-      } else {
-        updated = [...reads, cleanId];
+    return this.serializeMutation(KEYS.READ_ITEMS, async () => {
+      try {
+        const cleanId = this.sanitizeId(id);
+        const reads = await this.getReadIds();
+        const exists = reads.includes(cleanId);
+        const updated = exists ? reads.filter(r => r !== cleanId) : [...reads, cleanId];
+        await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(updated));
+        return !exists;
+      } catch (err) {
+        console.warn('Could not toggle read status:', err);
+        return false;
       }
-      await AsyncStorage.setItem(KEYS.READ_ITEMS, JSON.stringify(updated));
-      return !exists;
-    } catch (err) {
-      console.warn('Could not toggle read status:', err);
-      return false;
-    }
+    });
   }
 
   // --- Reader Settings (Kindle customization) ---
@@ -222,7 +278,8 @@ export class StorageService {
   }
 
   static async toggleFavorite(id: string): Promise<boolean> {
-    try {
+    return this.serializeMutation(KEYS.FAVORITES, async () => {
+      try {
       const cleanId = this.sanitizeId(id);
       const favs = await this.getFavorites();
       let updated: string[];
@@ -237,9 +294,10 @@ export class StorageService {
 
       await AsyncStorage.setItem(KEYS.FAVORITES, JSON.stringify(updated));
       return isNowFav;
-    } catch {
-      return false;
-    }
+      } catch {
+        return false;
+      }
+    });
   }
 
   // --- Item Dossier Cache (Full offline storage with decoupled cache keys) ---
@@ -312,16 +370,61 @@ export class StorageService {
     }
   }
 
+  static async getCacheStats(): Promise<{ cachedArticlesCount: number; approxBytes: number }> {
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const articleKeys = allKeys.filter(k => k.startsWith(KEYS.CACHED_ITEMS));
+      let approxBytes = 0;
+      if (articleKeys.length > 0) {
+        const pairs = await AsyncStorage.multiGet(articleKeys);
+        for (const [, val] of pairs) {
+          if (val) approxBytes += val.length * 2;
+        }
+      }
+      return { cachedArticlesCount: articleKeys.length, approxBytes };
+    } catch {
+      return { cachedArticlesCount: 0, approxBytes: 0 };
+    }
+  }
+
+  static async clearArticleCache(preserveFavorites = true): Promise<number> {
+    try {
+      const allKeys = await AsyncStorage.getAllKeys();
+      const articleKeys = allKeys.filter(k => k.startsWith(KEYS.CACHED_ITEMS));
+      if (articleKeys.length === 0) return 0;
+
+      let keysToRemove = articleKeys;
+      if (preserveFavorites) {
+        const favorites = await this.getFavorites();
+        const favSet = new Set(favorites.map(f => this.sanitizeId(f)));
+        keysToRemove = articleKeys.filter(k => {
+          for (const fav of favSet) {
+            if (k.includes(`_${fav}_`) || k.endsWith(`_${fav}`)) return false;
+          }
+          return true;
+        });
+      }
+
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+      }
+      return keysToRemove.length;
+    } catch (err) {
+      console.warn('Could not clear article cache:', err);
+      return 0;
+    }
+  }
+
   // --- Index Cache (Levels, Entities & Library categories) ---
-  static async getCachedIndex(type: string): Promise<WikiListItem[] | null> {
+  static async getCachedIndex(type: string, lang: 'es' | 'en' = 'es'): Promise<WikiListItem[] | null> {
     try {
       let key: string;
       if (type === 'levels') {
-        key = KEYS.LEVEL_INDEX;
+        key = `${KEYS.LEVEL_INDEX}_${lang}`;
       } else if (type === 'entities') {
-        key = KEYS.ENTITY_INDEX;
+        key = `${KEYS.ENTITY_INDEX}_${lang}`;
       } else {
-        key = `@backrooms_library_${type}_v2`;
+        key = `@backrooms_library_${type}_v5_${lang}`;
       }
       const data = await AsyncStorage.getItem(key);
       if (!data) return null;
@@ -329,6 +432,7 @@ export class StorageService {
       const parsed: WikiListItem[] = JSON.parse(data);
       // Defensive filter: remove any navigational or rewrite-policy junk links that may have been cached previously
       return parsed.filter(item => {
+        if (!item || !item.id?.trim() || !item.path?.trim() || !item.title?.trim()) return false;
         const p = item.path ? item.path.toLowerCase() : '';
         const t = item.title ? item.title.toLowerCase().trim() : '';
         if (
@@ -353,17 +457,18 @@ export class StorageService {
     }
   }
 
-  static async saveIndexToCache(type: string, list: WikiListItem[]): Promise<void> {
+  static async saveIndexToCache(type: string, list: WikiListItem[], lang: 'es' | 'en' = 'es'): Promise<void> {
     try {
       let key: string;
       if (type === 'levels') {
-        key = KEYS.LEVEL_INDEX;
+        key = `${KEYS.LEVEL_INDEX}_${lang}`;
       } else if (type === 'entities') {
-        key = KEYS.ENTITY_INDEX;
+        key = `${KEYS.ENTITY_INDEX}_${lang}`;
       } else {
-        key = `@backrooms_library_${type}_v2`;
+        key = `@backrooms_library_${type}_v5_${lang}`;
       }
-      await AsyncStorage.setItem(key, JSON.stringify(list));
+      const usableList = list.filter(item => item.id?.trim() && item.path?.trim() && item.title?.trim());
+      await AsyncStorage.setItem(key, JSON.stringify(usableList));
     } catch (err) {
       console.warn('Could not cache index:', err);
     }

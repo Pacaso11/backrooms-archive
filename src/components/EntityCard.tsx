@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { WikiListItem } from '../types/wikidot';
 import { THEME } from '../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,6 +52,8 @@ function EntityCardComponent({
         pressed && styles.cardPressed,
       ]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.displayName}${genuineClass ? `, ${genuineClass}` : ''}${isRead ? ', leído' : ''}`}
     >
       {/* Left Hazard Accent Stripe */}
       <View style={[styles.hazardStripe, { backgroundColor: stripeColor }]} />
@@ -85,6 +87,8 @@ function EntityCardComponent({
               }}
               style={styles.readToggleBtn}
               accessibilityLabel={isRead ? 'Desmarcar como leído' : 'Marcar como leído'}
+              accessibilityRole="button"
+              accessibilityState={{ selected: !!isRead }}
             >
               <Ionicons
                 name={isRead ? 'checkmark-circle' : 'checkmark-circle-outline'}
@@ -95,15 +99,24 @@ function EntityCardComponent({
           )}
         </View>
 
-        {/* Title and Nickname in Quotes */}
-        <View style={styles.titleSection}>
-          <Text style={[styles.title, isRead && styles.titleRead]} numberOfLines={1}>
-            {item.title}
-          </Text>
-          {cleanSub ? (
-            <Text style={styles.subTitle} numberOfLines={1}>
-              "{cleanSub}"
+        {/* Title and Nickname with optional Thumbnail */}
+        <View style={styles.titleAndThumbRow}>
+          <View style={styles.titleSection}>
+            <Text style={[styles.title, isRead && styles.titleRead]} numberOfLines={1}>
+              {item.title}
             </Text>
+            {cleanSub ? (
+              <Text style={styles.subTitle} numberOfLines={1}>
+                "{cleanSub}"
+              </Text>
+            ) : null}
+          </View>
+          {item.imageUrl ? (
+            <Image
+              source={{ uri: item.imageUrl }}
+              style={styles.cardThumbnail}
+              resizeMode="cover"
+            />
           ) : null}
         </View>
 
@@ -148,12 +161,12 @@ export const EntityCard = React.memo(EntityCardComponent, (prev, next) => {
 const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
-    backgroundColor: '#111622',
-    marginVertical: 4,
-    marginHorizontal: 2,
+    backgroundColor: THEME.colors.surface,
+    marginVertical: 5,
+    marginHorizontal: 1,
     borderRadius: THEME.radius.md,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: THEME.colors.surfaceBorder,
     overflow: 'hidden',
   },
   cardSelected: {
@@ -161,20 +174,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#1e141a',
   },
   cardRead: {
-    opacity: 0.88,
-    backgroundColor: '#0d111a',
+    backgroundColor: '#111720',
   },
   cardPressed: {
     opacity: 0.75,
   },
   hazardStripe: {
-    width: 4,
+    width: 3,
     alignSelf: 'stretch',
   },
   cardContent: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
   headerRow: {
     flexDirection: 'row',
@@ -245,11 +257,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  titleAndThumbRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  cardThumbnail: {
+    width: 44,
+    height: 44,
+    borderRadius: 6,
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
   titleSection: {
+    flex: 1,
     marginBottom: 4,
   },
   title: {
-    fontSize: 15,
+    fontFamily: THEME.fonts.sans,
+    fontSize: 16,
     fontWeight: '700',
     color: '#f8fafc',
     letterSpacing: 0.2,
@@ -258,15 +286,17 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
   },
   subTitle: {
-    fontSize: 12.5,
+    fontFamily: THEME.fonts.sans,
+    fontSize: 13,
     fontStyle: 'italic',
     color: '#94a3b8',
     marginTop: 1,
   },
   snippetText: {
-    fontSize: 12,
-    lineHeight: 16.5,
-    color: '#64748b',
+    fontFamily: THEME.fonts.sans,
+    fontSize: THEME.type.label,
+    lineHeight: 18,
+    color: THEME.colors.textSecondary,
     marginBottom: 8,
   },
   tagsRow: {

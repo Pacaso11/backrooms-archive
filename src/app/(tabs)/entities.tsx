@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   FlatList,
-  ActivityIndicator,
   RefreshControl,
   Pressable,
   Platform,
@@ -16,9 +15,11 @@ import { WikiListItem } from '../../types/wikidot';
 import { WikidotService } from '../../services/wikidotService';
 import { StorageService } from '../../services/storageService';
 import { EntityCard } from '../../components/EntityCard';
+import { EmptyState, LoadingState } from '../../components/ScreenStates';
 import { SearchBar } from '../../components/SearchBar';
 import { DossierView } from '../../components/DossierView';
 import { LanguageToggle } from '../../components/LanguageToggle';
+import { EntityFilterBar, EntityFilter } from '../../components/EntityFilterBar';
 import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -41,6 +42,7 @@ export default function EntitiesScreen() {
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
 
   const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [entityFilter, setEntityFilter] = useState<EntityFilter>('all');
   const [isPanelExpanded, setIsPanelExpanded] = useState(false);
 
   const togglePanel = useCallback(() => {
@@ -53,7 +55,7 @@ export default function EntitiesScreen() {
       const currentLang = targetLang || lang;
 
       if (!forceRefresh) {
-        const cached = await StorageService.getCachedIndex('entities');
+        const cached = await StorageService.getCachedIndex('entities', currentLang);
         if (cached && cached.length > 0) {
           setEntities(cached);
           setLoading(false);
@@ -62,7 +64,7 @@ export default function EntitiesScreen() {
 
       const fetched = await WikidotService.fetchEntities(currentLang);
       setEntities(fetched);
-      await StorageService.saveIndexToCache('entities', fetched);
+      await StorageService.saveIndexToCache('entities', fetched, currentLang);
     } catch (err) {
       console.warn('Could not fetch entities:', err);
     } finally {
@@ -149,9 +151,28 @@ export default function EntitiesScreen() {
       if (readFilter === 'unread' && readIds.has(e.id)) return false;
       if (readFilter === 'read' && !readIds.has(e.id)) return false;
 
+      // 3. Entity Classification / Disposition Filter
+      if (entityFilter !== 'all') {
+        const cls = (e.previewClass || '').toLowerCase();
+        const tagStr = (e.tags || []).join(' ').toLowerCase();
+        if (entityFilter === 'passive') {
+          const isPassive = cls.includes('pasivo') || cls.includes('passive') || cls.includes('neutral') || cls.includes('dócil') || cls.includes('docile') || cls.includes('safe') || cls.includes('seguro');
+          if (!isPassive) return false;
+        } else if (entityFilter === 'hostile') {
+          const isHostile = cls.includes('hostil') || cls.includes('hostile') || cls.includes('peligro') || cls.includes('danger') || cls.includes('agresivo') || cls.includes('aggressive');
+          if (!isHostile) return false;
+        } else if (entityFilter === 'anomalous') {
+          const isAnomalous = cls.includes('anómalo') || cls.includes('anomalous') || cls.includes('variable');
+          if (!isAnomalous) return false;
+        } else if (entityFilter === 'special') {
+          const isSpecial = cls.includes('enigmátic') || cls.includes('enigmatic') || tagStr.includes('enigmátic') || tagStr.includes('especial');
+          if (!isSpecial) return false;
+        }
+      }
+
       return true;
     });
-  }, [entities, search, readFilter, readIds]);
+  }, [entities, search, readFilter, entityFilter, readIds]);
 
   const handleSelectEntity = useCallback((item: WikiListItem) => {
     setSelectedPath(item.path);
@@ -247,6 +268,13 @@ export default function EntitiesScreen() {
           </Pressable>
         </View>
 
+        {/* Entity Disposition / Classification Filter Bar */}
+        <EntityFilterBar
+          currentFilter={entityFilter}
+          onSelectFilter={setEntityFilter}
+          lang={lang}
+        />
+
         {/* Collapsible Panel */}
         {isPanelExpanded && (
           <View style={styles.expandedPanel}>
@@ -299,18 +327,23 @@ export default function EntitiesScreen() {
         </View>
 
         {loading && entities.length === 0 ? (
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="small" color={THEME.colors.accentRed} />
-            <Text style={styles.loadingText}>
-              {lang === 'es' ? 'Sincronizando Bestiario de Entidades...' : 'Syncing Wikidot Bestiary...'}
-            </Text>
-          </View>
+          <LoadingState message={lang === 'es' ? 'Cargando entidades' : 'Loading entities'} tint={THEME.colors.accentRed} />
         ) : (
           <FlatList
             data={filteredEntities}
             keyExtractor={keyExtractor}
             renderItem={renderEntityItem}
             contentContainerStyle={styles.listContent}
+            ListEmptyComponent={(
+              <EmptyState
+                icon="search-outline"
+                title={lang === 'es' ? 'No hay entidades con estos filtros' : 'No entities match these filters'}
+                description={lang === 'es' ? 'Prueba otra búsqueda o quita el filtro de lectura.' : 'Try another search or clear the reading filter.'}
+                actionLabel={lang === 'es' ? 'Limpiar filtros' : 'Clear filters'}
+                onAction={() => { setSearch(''); setReadFilter('all'); }}
+                tint={THEME.colors.accentRed}
+              />
+            )}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -359,7 +392,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: 12,
+    paddingTop: 8,
     paddingBottom: 6,
     gap: 8,
   },
@@ -367,8 +400,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   controlIconBtn: {
-    width: 38,
-    height: 38,
+    width: THEME.touch.min,
+    height: THEME.touch.min,
     borderRadius: THEME.radius.md,
     backgroundColor: THEME.colors.surface,
     borderWidth: 1,
@@ -390,7 +423,7 @@ const styles = StyleSheet.create({
     padding: 2.5,
     borderWidth: 1,
     borderColor: '#1e293b',
-    height: 34,
+    height: 40,
   },
   segmentTab: {
     flex: 1,
@@ -405,7 +438,7 @@ const styles = StyleSheet.create({
   },
   segmentTabText: {
     fontFamily: THEME.fonts.mono,
-    fontSize: 9.5,
+    fontSize: 10.5,
     fontWeight: '700',
     color: '#64748b',
     letterSpacing: 0.2,

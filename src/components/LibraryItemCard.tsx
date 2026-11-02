@@ -42,6 +42,8 @@ function LibraryItemCardComponent({
         pressed && styles.cardPressed,
       ]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.displayName}${isRead ? ', leído' : ''}`}
     >
       {/* Left Accent Stripe */}
       <View style={[styles.accentStripe, { backgroundColor: categoryColor }]} />
@@ -70,6 +72,8 @@ function LibraryItemCardComponent({
               }}
               style={styles.readToggleBtn}
               accessibilityLabel={isRead ? 'Desmarcar como leído' : 'Marcar como leído'}
+              accessibilityRole="button"
+              accessibilityState={{ selected: !!isRead }}
             >
               <Ionicons
                 name={isRead ? 'checkmark-circle' : 'checkmark-circle-outline'}
@@ -165,9 +169,8 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.colors.surfaceHighlight,
   },
   cardRead: {
-    opacity: 0.85,
-    backgroundColor: '#070C10',
-    borderColor: '#17232B',
+    backgroundColor: '#111720',
+    borderColor: THEME.colors.surfaceBorder,
   },
   cardPressed: {
     opacity: 0.9,
@@ -226,8 +229,8 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   itemTitle: {
-    fontFamily: THEME.fonts.mono,
-    fontSize: 15,
+    fontFamily: THEME.fonts.sans,
+    fontSize: 16,
     fontWeight: '700',
     color: THEME.colors.textPrimary,
     lineHeight: 20,
@@ -236,18 +239,18 @@ const styles = StyleSheet.create({
     color: THEME.colors.textSecondary,
   },
   itemSubTitle: {
-    fontFamily: THEME.fonts.mono,
-    fontSize: 13,
+    fontFamily: THEME.fonts.sans,
+    fontSize: 14,
     color: THEME.colors.accentCyan,
     marginTop: 2,
     fontStyle: 'italic',
   },
   itemSubTitleRead: {
-    color: '#4B6B7C',
+    color: THEME.colors.textSecondary,
   },
   snippetText: {
-    fontFamily: THEME.fonts.mono,
-    fontSize: 11,
+    fontFamily: THEME.fonts.sans,
+    fontSize: THEME.type.label,
     color: THEME.colors.textSecondary,
     lineHeight: 16,
     marginBottom: 8,

@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, Pressable } from 'react-native';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, FlatList, Pressable, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { StorageService } from '../../services/storageService';
 import { DossierView } from '../../components/DossierView';
@@ -7,33 +7,43 @@ import { useResponsiveLayout } from '../../hooks/useResponsiveLayout';
 import { THEME } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { WikiListItem } from '../../types/wikidot';
-import { LIBRARY_CATEGORIES, inferItemCategory } from '../../services/wikidotService';
+import { CANON_SPANISH_TITLES, LIBRARY_CATEGORIES, inferItemCategory } from '../../services/wikidotService';
+import { useLanguage } from '../../context/LanguageContext';
+import { EmptyState } from '../../components/ScreenStates';
+import { SearchBar } from '../../components/SearchBar';
+import { SyncModal } from '../../components/SyncModal';
 
 type TabView = 'saved' | 'history';
 
 export default function FavoritesScreen() {
   const router = useRouter();
   const { isSplitView, masterWidth } = useResponsiveLayout();
+  const { language } = useLanguage();
 
   const [activeTab, setActiveTab] = useState<TabView>('saved');
   const [favorites, setFavorites] = useState<string[]>([]);
   const [historyIds, setHistoryIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [itemMap, setItemMap] = useState<Map<string, WikiListItem>>(new Map());
+  const [search, setSearch] = useState('');
+  const [cacheStats, setCacheStats] = useState<{ cachedArticlesCount: number; approxBytes: number } | null>(null);
+  const [showSyncModal, setShowSyncModal] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const libraryPromises = LIBRARY_CATEGORIES.map(cat => StorageService.getCachedIndex(cat.key));
-      const [favs, reads, levels, entities, ...libraryLists] = await Promise.all([
+      const libraryPromises = LIBRARY_CATEGORIES.map(cat => StorageService.getCachedIndex(cat.key, language));
+      const [favs, reads, stats, levels, entities, ...libraryLists] = await Promise.all([
         StorageService.getFavorites(),
-        StorageService.getReadIds(),
-        StorageService.getCachedIndex('levels'),
-        StorageService.getCachedIndex('entities'),
+        StorageService.getHistoryIds(),
+        StorageService.getCacheStats(),
+        StorageService.getCachedIndex('levels', language),
+        StorageService.getCachedIndex('entities', language),
         ...libraryPromises,
       ]);
 
       setFavorites(favs);
-      setHistoryIds([...reads].reverse()); // prevent mutating original array
+      setHistoryIds(reads);
+      setCacheStats(stats);
 
       const map = new Map<string, WikiListItem>();
       if (levels) levels.forEach(l => map.set(l.id, l));
@@ -46,13 +56,13 @@ export default function FavoritesScreen() {
       setItemMap(map);
 
       const list = activeTab === 'saved' ? favs : reads;
-      if (list.length > 0 && !selectedId) {
-        setSelectedId(list[0]);
+      if (list.length > 0) {
+        setSelectedId(prev => prev || list[0]);
       }
     } catch (err) {
       console.warn('Error loading favorites and history:', err);
     }
-  }, [activeTab, selectedId]);
+  }, [activeTab, language]);
 
   useFocusEffect(
     useCallback(() => {
@@ -69,7 +79,57 @@ export default function FavoritesScreen() {
     }
   };
 
+  const handleClearHistory = () => {
+    Alert.alert(
+      language === 'es' ? '¿Purgar historial de lecturas?' : 'Clear reading history?',
+      language === 'es'
+        ? 'Se eliminarán todos los registros de expedientes leídos. Tus favoritos guardados se conservarán intactos.'
+        : 'All recent reading history entries will be removed. Your saved favorites will remain intact.',
+      [
+        { text: language === 'es' ? 'Cancelar' : 'Cancel', style: 'cancel' },
+        {
+          text: language === 'es' ? 'Purgar' : 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            await StorageService.clearHistory();
+            await loadData();
+          },
+        },
+      ]
+    );
+  };
+
+  const handlePurgeCache = () => {
+    Alert.alert(
+      language === 'es' ? '¿Liberar caché de lectura?' : 'Purge reading cache?',
+      language === 'es'
+        ? 'Se liberará el espacio de almacenamiento de expedientes visitados conservando tus favoritos offline.'
+        : 'Storage used by visited dossiers will be freed, keeping your saved favorites intact.',
+      [
+        { text: language === 'es' ? 'Cancelar' : 'Cancel', style: 'cancel' },
+        {
+          text: language === 'es' ? 'Liberar' : 'Purge',
+          onPress: async () => {
+            await StorageService.clearArticleCache(true);
+            await loadData();
+          },
+        },
+      ]
+    );
+  };
+
   const displayedList = activeTab === 'saved' ? favorites : historyIds;
+
+  const filteredList = useMemo(() => {
+    if (!search.trim()) return displayedList;
+    const q = search.toLowerCase().trim();
+    return displayedList.filter(id => {
+      const info = itemMap.get(id);
+      const title = info?.title?.toLowerCase() || '';
+      const subTitle = info?.subTitle?.toLowerCase() || '';
+      return id.toLowerCase().includes(q) || title.includes(q) || subTitle.includes(q);
+    });
+  }, [displayedList, search, itemMap]);
 
   return (
     <View style={styles.container}>
@@ -86,7 +146,7 @@ export default function FavoritesScreen() {
               color={activeTab === 'saved' ? THEME.colors.accentAmber : THEME.colors.textMuted}
             />
             <Text style={[styles.toggleBtnText, activeTab === 'saved' && styles.toggleBtnTextActive]}>
-              GUARDADOS ({favorites.length})
+              {language === 'es' ? `GUARDADOS (${favorites.length})` : `SAVED (${favorites.length})`}
             </Text>
           </Pressable>
 
@@ -100,41 +160,110 @@ export default function FavoritesScreen() {
               color={activeTab === 'history' ? THEME.colors.accentGreen : THEME.colors.textMuted}
             />
             <Text style={[styles.toggleBtnText, activeTab === 'history' && styles.toggleBtnTextActive]}>
-              HISTORIAL ({historyIds.length})
+              {language === 'es' ? `HISTORIAL (${historyIds.length})` : `HISTORY (${historyIds.length})`}
             </Text>
           </Pressable>
+        </View>
+
+        {/* Search Bar for Favorites and History */}
+        <View style={styles.searchRow}>
+          <SearchBar
+            value={search}
+            onChangeText={setSearch}
+            placeholder={
+              activeTab === 'saved'
+                ? (language === 'es' ? 'Buscar en guardados...' : 'Search saved...')
+                : (language === 'es' ? 'Buscar en historial...' : 'Search history...')
+            }
+          />
         </View>
 
         <View style={styles.statusBar}>
           <Text style={styles.countText}>
             {activeTab === 'saved'
-              ? `${favorites.length} EXPEDIENTES OFFLINE`
-              : `${historyIds.length} EXPEDIENTES LEÍDOS`}
+              ? (language === 'es' ? `${filteredList.length} GUARDADOS` : `${filteredList.length} SAVED`)
+              : (language === 'es' ? `${filteredList.length} EN HISTORIAL` : `${filteredList.length} IN HISTORY`)}
           </Text>
-          <Pressable onPress={loadData} style={styles.syncBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-            <Ionicons name="refresh" size={14} color={THEME.colors.textMuted} />
-          </Pressable>
+
+          <View style={styles.statusBarActions}>
+            {/* Clear History Button */}
+            {activeTab === 'history' && historyIds.length > 0 && (
+              <Pressable
+                onPress={handleClearHistory}
+                style={styles.actionPillBtn}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel="Purgar historial"
+              >
+                <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                <Text style={styles.actionPillTextDanger}>
+                  {language === 'es' ? 'PURGAR' : 'CLEAR'}
+                </Text>
+              </Pressable>
+            )}
+
+            {/* Cache Storage Clean Button */}
+            {cacheStats && cacheStats.cachedArticlesCount > 0 && (
+              <Pressable
+                onPress={handlePurgeCache}
+                style={styles.actionPillBtn}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityRole="button"
+                accessibilityLabel="Liberar espacio de caché"
+              >
+                <Ionicons name="hardware-chip-outline" size={13} color={THEME.colors.accentAmber} />
+                <Text style={styles.actionPillTextAmber}>
+                  {`~${(cacheStats.approxBytes / (1024 * 1024)).toFixed(1)} MB`}
+                </Text>
+              </Pressable>
+            )}
+
+            {/* Offline Sync Trigger Button */}
+            <Pressable
+              onPress={() => setShowSyncModal(true)}
+              style={[styles.actionPillBtn, styles.actionPillBtnPrimary]}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel="Descarga offline táctica"
+            >
+              <Ionicons name="cloud-download-outline" size={13} color="#000" />
+              <Text style={styles.actionPillTextPrimary}>
+                {language === 'es' ? 'OFFLINE SYNC' : 'OFFLINE SYNC'}
+              </Text>
+            </Pressable>
+
+            <Pressable onPress={loadData} style={styles.syncBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+              <Ionicons name="refresh" size={14} color={THEME.colors.textMuted} />
+            </Pressable>
+          </View>
         </View>
 
-        {displayedList.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Ionicons
-              name={activeTab === 'saved' ? 'bookmark-outline' : 'book-outline'}
-              size={48}
-              color={THEME.colors.surfaceBorder}
-            />
-            <Text style={styles.emptyTitle}>
-              {activeTab === 'saved' ? 'SIN EXPEDIENTES GUARDADOS' : 'HISTORIAL VACÍO'}
-            </Text>
-            <Text style={styles.emptySub}>
-              {activeTab === 'saved'
-                ? 'Toca la estrella en cualquier nivel o entidad para descargarlo y leerlo sin conexión.'
-                : 'Los niveles y entidades que vayas leyendo aparecerán registrados automáticamente aquí.'}
-            </Text>
-          </View>
+        {filteredList.length === 0 ? (
+          <EmptyState
+            icon={search ? 'search-outline' : (activeTab === 'saved' ? 'bookmark-outline' : 'time-outline')}
+            title={
+              search
+                ? (language === 'es' ? 'No se encontraron expedientes' : 'No matching dossiers')
+                : (activeTab === 'saved'
+                  ? (language === 'es' ? 'Aún no guardaste expedientes' : 'No saved dossiers yet')
+                  : (language === 'es' ? 'Tu historial está vacío' : 'Your history is empty'))
+            }
+            description={
+              search
+                ? (language === 'es' ? 'Prueba buscando por otro término, número o código.' : 'Try searching by another title or code.')
+                : (activeTab === 'saved'
+                  ? (language === 'es'
+                    ? 'Guarda expedientes con la estrella para tenerlos a mano sin conexión.'
+                    : 'Star dossiers to keep them handy for offline reading.')
+                  : (language === 'es'
+                    ? 'Los expedientes que abras aparecerán aquí, con la visita más reciente primero.'
+                    : 'Dossiers you open appear here, with the most recent visit first.'))
+            }
+            tint={activeTab === 'saved' ? THEME.colors.accentAmber : THEME.colors.accentGreen}
+          />
         ) : (
           <FlatList
-            data={displayedList}
+            data={filteredList}
             keyExtractor={item => item}
             renderItem={({ item }) => {
               const info = itemMap.get(item);
@@ -142,23 +271,25 @@ export default function FavoritesScreen() {
               let title = info ? info.title : undefined;
               if (!title) {
                 if (inferredCat === 'entity') {
-                  title = item.replace(/^(?:entity|entidad)-/i, 'Entidad ');
+                  const number = item.match(/^(?:entity|entidad)-?(\d+)$/i)?.[1];
+                  title = number ? `Entidad ${number}` : (language === 'es' ? 'Entidad archivada' : item);
                 } else if (inferredCat === 'level') {
-                  title = item.replace(/^(?:level|nivel)-/i, 'Nivel ');
+                  const number = item.match(/^(?:level|nivel)-?(\d+)$/i)?.[1];
+                  title = number ? `Nivel ${number}` : (language === 'es' ? 'Nivel archivado' : item);
                 } else if (inferredCat === 'object') {
-                  title = item.replace(/^(?:object|objeto)-/i, 'Objeto ');
+                  title = language === 'es' ? 'Objeto archivado' : item;
                 } else if (inferredCat === 'phenomenon') {
-                  title = item.replace(/^(?:phenomenon|fenomeno)-/i, 'Fenómeno ');
+                  title = language === 'es' ? 'Fenómeno archivado' : item;
                 } else if (inferredCat === 'tale') {
-                  title = item.replace(/^(?:tale|relato)-/i, 'Relato: ');
+                  title = language === 'es' ? 'Relato archivado' : item;
                 } else if (inferredCat === 'group') {
-                  title = item.replace(/^(?:group|grupo)-/i, 'Grupo: ');
+                  title = language === 'es' ? 'Grupo archivado' : item;
                 } else if (inferredCat === 'poi') {
-                  title = item.replace(/^(?:poi|pdi)-/i, 'PDI: ');
+                  title = language === 'es' ? 'Punto de interés archivado' : item;
                 } else if (inferredCat === 'canon') {
-                  title = item.replace(/-canon(?:-hub)?$/i, '').replace(/-/g, ' ');
+                  title = CANON_SPANISH_TITLES[`/${item}`] || 'Canon archivado';
                 } else {
-                  title = item.replace(/-/g, ' ');
+                  title = language === 'es' ? 'Expediente archivado' : item.replace(/-/g, ' ');
                 }
               }
 
@@ -205,7 +336,9 @@ export default function FavoritesScreen() {
                           { color: activeTab === 'saved' ? THEME.colors.accentAmber : THEME.colors.accentGreen },
                         ]}
                       >
-                        {activeTab === 'saved' ? 'GUARDADO OFFLINE' : 'EXPEDIENTE LEÍDO'}
+                        {activeTab === 'saved'
+                          ? (language === 'es' ? 'GUARDADO EN CACHÉ' : 'CACHED ON DEVICE')
+                          : (language === 'es' ? 'EXPEDIENTE LEÍDO' : 'DOSSIER READ')}
                       </Text>
                     </View>
 
@@ -238,11 +371,22 @@ export default function FavoritesScreen() {
             />
           ) : (
             <View style={styles.selectPrompt}>
-              <Text style={styles.selectPromptText}>SELECCIONA UN EXPEDIENTE PARA ABRIR</Text>
+              <Text style={styles.selectPromptText}>
+                {language === 'es' ? 'SELECCIONA UN EXPEDIENTE PARA ABRIR' : 'SELECT A DOSSIER TO OPEN'}
+              </Text>
             </View>
           )}
         </View>
       )}
+
+      <SyncModal
+        visible={showSyncModal}
+        onClose={() => {
+          setShowSyncModal(false);
+          loadData();
+        }}
+        lang={language}
+      />
     </View>
   );
 }
@@ -273,6 +417,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: THEME.touch.min,
     paddingVertical: 8,
     borderRadius: THEME.radius.md,
     backgroundColor: THEME.colors.surface,
@@ -305,6 +450,51 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.surfaceBorder,
     marginTop: 6,
+  },
+  searchRow: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+  },
+  statusBarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  actionPillBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: THEME.radius.sm,
+    backgroundColor: THEME.colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: THEME.colors.surfaceBorder,
+  },
+  actionPillTextDanger: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#ef4444',
+    letterSpacing: 0.5,
+  },
+  actionPillTextAmber: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: THEME.colors.accentAmber,
+    letterSpacing: 0.5,
+  },
+  actionPillBtnPrimary: {
+    backgroundColor: THEME.colors.accentAmber,
+    borderColor: THEME.colors.accentAmber,
+  },
+  actionPillTextPrimary: {
+    fontFamily: THEME.fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#000',
+    letterSpacing: 0.5,
   },
   countText: {
     fontFamily: THEME.fonts.mono,
@@ -383,9 +573,9 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   favTitle: {
-    fontFamily: THEME.fonts.mono,
-    fontSize: 13.5,
-    fontWeight: '800',
+    fontFamily: THEME.fonts.sans,
+    fontSize: 16,
+    fontWeight: '700',
     color: THEME.colors.textPrimary,
   },
   favSub: {

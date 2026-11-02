@@ -24,6 +24,18 @@ AsyncStorage.clear = async (): Promise<void> => {
   inMemoryStorage.clear();
 };
 
+AsyncStorage.getAllKeys = async (): Promise<readonly string[]> => {
+  return Array.from(inMemoryStorage.keys());
+};
+
+AsyncStorage.multiGet = async (keys: readonly string[]): Promise<readonly [string, string | null][]> => {
+  return keys.map(k => [k, inMemoryStorage.has(k) ? inMemoryStorage.get(k)! : null] as [string, string | null]);
+};
+
+AsyncStorage.multiRemove = async (keys: readonly string[]): Promise<void> => {
+  keys.forEach(k => inMemoryStorage.delete(k));
+};
+
 const createSampleItem = (overrides: Partial<BackroomsItem> = {}): BackroomsItem => ({
   id: 'level-0',
   path: '/level-0',
@@ -72,6 +84,23 @@ describe('Requirement R3: Cache Isolation & Persistence without Identifier Mutat
       assert.strictEqual(key2, `${KEYS.CACHED_ITEMS}_level-0_en`);
       assert.strictEqual(key3, `${KEYS.CACHED_ITEMS}_level-0_es`);
       assert.strictEqual(key4, `${KEYS.CACHED_ITEMS}_entity-1_es`);
+    });
+  });
+
+  describe('Index cache language isolation', () => {
+    test('keeps library and list indexes separate for Spanish and English', async () => {
+      const esIndex = [{ id: 'level-0', path: '/level-0', title: 'Nivel 0', displayName: 'Nivel 0', category: 'level' as const, numberStr: '0', lang: 'es' as const }];
+      const enIndex = [{ ...esIndex[0], title: 'Level 0', displayName: 'Level 0', lang: 'en' as const }];
+
+      await StorageService.saveIndexToCache('levels', esIndex, 'es');
+      await StorageService.saveIndexToCache('levels', enIndex, 'en');
+      await StorageService.saveIndexToCache('objects', esIndex, 'es');
+      await StorageService.saveIndexToCache('objects', enIndex, 'en');
+
+      assert.strictEqual((await StorageService.getCachedIndex('levels', 'es'))?.[0].title, 'Nivel 0');
+      assert.strictEqual((await StorageService.getCachedIndex('levels', 'en'))?.[0].title, 'Level 0');
+      assert.strictEqual((await StorageService.getCachedIndex('objects', 'es'))?.[0].title, 'Nivel 0');
+      assert.strictEqual((await StorageService.getCachedIndex('objects', 'en'))?.[0].title, 'Level 0');
     });
   });
 
@@ -152,6 +181,14 @@ describe('Requirement R3: Cache Isolation & Persistence without Identifier Mutat
       assert.ok(bySlashPrefix);
       assert.strictEqual(bySlashPrefix!.id, 'level-0');
       assert.strictEqual(bySlashPrefix!.path, '/level-0');
+    });
+
+    test('preserves nested wiki paths as cache identifiers', async () => {
+      const item = createSampleItem({ id: 'subcluster/level-2/sector-7', path: '/subcluster/level-2/sector-7' });
+      await StorageService.saveItemToCache(item, 'es');
+      const retrieved = await StorageService.getCachedItem(item.id, 'es');
+      assert.strictEqual(retrieved?.id, item.id);
+      assert.strictEqual(retrieved?.path, item.path);
     });
 
     test('auto-heals and migrates legacy cache entries stored under old monolithic keys', async () => {
@@ -301,6 +338,34 @@ describe('Requirement R3: Cache Isolation & Persistence without Identifier Mutat
       assert.deepStrictEqual(favsAfter, []);
     });
 
+    test('serializes overlapping favorite and read-state mutations', async () => {
+      const favoriteResults = await Promise.all([
+        StorageService.toggleFavorite('level-3'),
+        StorageService.toggleFavorite('entity-3'),
+      ]);
+      assert.deepStrictEqual(favoriteResults, [true, true]);
+      assert.deepStrictEqual(new Set(await StorageService.getFavorites()), new Set(['level-3', 'entity-3']));
+
+      const readResults = await Promise.all([
+        StorageService.toggleRead('level-4'),
+        StorageService.toggleRead('entity-4'),
+      ]);
+      assert.deepStrictEqual(readResults, [true, true]);
+      assert.deepStrictEqual(new Set(await StorageService.getReadIds()), new Set(['level-4', 'entity-4']));
+    });
+
+    test('records most recently opened dossiers first and caps history at 200 items', async () => {
+      await StorageService.recordHistory('/level-1');
+      await StorageService.recordHistory('/entity-1');
+      await StorageService.recordHistory('/level-1');
+      assert.deepStrictEqual(await StorageService.getHistoryIds(), ['level-1', 'entity-1']);
+
+      for (let i = 0; i < 205; i += 1) await StorageService.recordHistory(`level-${i + 10}`);
+      const history = await StorageService.getHistoryIds();
+      assert.strictEqual(history.length, 200);
+      assert.strictEqual(history[0], 'level-214');
+    });
+
     test('getReadIds auto-heals contaminated entries and markAsRead cleanses input', async () => {
       const contaminatedReads = ['level-0_es_v5_canonical', '/entity-1'];
       inMemoryStorage.set(KEYS.READ_ITEMS, JSON.stringify(contaminatedReads));
@@ -314,6 +379,43 @@ describe('Requirement R3: Cache Isolation & Persistence without Identifier Mutat
 
       await StorageService.unmarkAsRead('/level-2');
       assert.strictEqual(await StorageService.isRead('level-2'), false);
+    });
+
+    test('clearHistory clears reading history cleanly', async () => {
+      await StorageService.recordHistory('level-1');
+      await StorageService.recordHistory('entity-1');
+      assert.strictEqual((await StorageService.getHistoryIds()).length, 2);
+
+      await StorageService.clearHistory();
+      assert.deepStrictEqual(await StorageService.getHistoryIds(), []);
+    });
+
+    test('getCacheStats and clearArticleCache manage offline articles and protect favorites', async () => {
+      // Save 2 items
+      await StorageService.saveItemToCache(createSampleItem({
+        id: 'level-10',
+        path: '/level-10',
+        title: 'Level 10',
+      }), 'es');
+      await StorageService.saveItemToCache(createSampleItem({
+        id: 'level-20',
+        path: '/level-20',
+        title: 'Level 20',
+      }), 'es');
+
+      // Add level-10 to favorites
+      await StorageService.toggleFavorite('level-10');
+
+      const stats = await StorageService.getCacheStats();
+      assert.strictEqual(stats.cachedArticlesCount >= 2, true);
+      assert.strictEqual(stats.approxBytes > 0, true);
+
+      // Clear cache preserving favorites: level-20 cleared, level-10 preserved
+      await StorageService.clearArticleCache(true);
+      const remainingItem10 = await StorageService.getCachedItem('level-10', 'es');
+      const remainingItem20 = await StorageService.getCachedItem('level-20', 'es');
+      assert.ok(remainingItem10, 'Favorite level-10 should be preserved');
+      assert.strictEqual(remainingItem20, null, 'Non-favorite level-20 should be cleared');
     });
   });
 });

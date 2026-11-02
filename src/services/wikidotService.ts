@@ -4,6 +4,81 @@ import { SURVIVAL_CLASSES_META } from '../constants/theme';
 const BASE_EN = 'https://backrooms-wiki.wikidot.com';
 const BASE_ES = 'https://es-backrooms-wiki.wikidot.com';
 
+const MAX_TRANSLATION_REQUESTS = 2;
+let activeTranslationRequests = 0;
+const translationWaiters: { grant: () => boolean; cancel: () => void }[] = [];
+
+async function acquireTranslationSlot(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new Error('Translation aborted');
+  if (activeTranslationRequests < MAX_TRANSLATION_REQUESTS) {
+    activeTranslationRequests += 1;
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const waiter = {
+      grant: () => {
+        signal?.removeEventListener('abort', onAbort);
+        if (signal?.aborted) {
+          reject(new Error('Translation aborted'));
+          return false;
+        }
+        activeTranslationRequests += 1;
+        resolve();
+        return true;
+      },
+      cancel: () => {
+        const index = translationWaiters.indexOf(waiter);
+        if (index !== -1) translationWaiters.splice(index, 1);
+        signal?.removeEventListener('abort', onAbort);
+        reject(new Error('Translation aborted'));
+      },
+    };
+    const onAbort = () => waiter.cancel();
+    translationWaiters.push(waiter);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function releaseTranslationSlot(): void {
+  activeTranslationRequests = Math.max(0, activeTranslationRequests - 1);
+  while (translationWaiters.length > 0) {
+    const waiter = translationWaiters.shift()!;
+    if (waiter.grant()) break;
+  }
+}
+
+async function withTranslationSlot<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
+  await acquireTranslationSlot(signal);
+  try {
+    return await task();
+  } finally {
+    releaseTranslationSlot();
+  }
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const upstreamSignal = init.signal;
+  const onAbort = () => controller.abort();
+
+  if (upstreamSignal?.aborted) {
+    controller.abort();
+  } else if (upstreamSignal) {
+    upstreamSignal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+    if (upstreamSignal) {
+      upstreamSignal.removeEventListener('abort', onAbort);
+    }
+  }
+}
+
 export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
   {
     key: 'objects',
@@ -138,6 +213,18 @@ export const LIBRARY_CATEGORIES: LibraryCategoryDef[] = [
     descriptionEs: 'Representaciones visuales, esquemas y bocetos de supervivientes.',
   },
 ];
+
+export function getLibraryCategoryBadge(categoryKey: string, lang: 'es' | 'en' = 'es'): string {
+  if (lang === 'en') {
+    return LIBRARY_CATEGORIES.find(category => category.key === categoryKey)?.badge || 'ARCH';
+  }
+  const spanishBadges: Record<string, string> = {
+    objects: 'OBJ', phenomena: 'FEN', groups: 'GRP', tales: 'REL', poi: 'PDI',
+    canons: 'CAN', subclusters: 'SER', jokes: 'BROMA', enigmatic_levels: 'NIV-ENIG',
+    enigmatic_entities: 'ENT-ENIG', art_gallery: 'ARTE',
+  };
+  return spanishBadges[categoryKey] || 'ARCH';
+}
 
 /**
  * Centralized Category Inference Engine
@@ -449,89 +536,104 @@ export function polishSpanishTranslation(text: string): string {
   if (!text) return text;
   return text
     // 1. Core Backrooms & Frontrooms nomenclature
-    .replace(/\b(?:las|la)\s+trastiendas?\b/gi, 'los Backrooms')
-    .replace(/\ben\s+la\s+trastienda\b/gi, 'en los Backrooms')
-    .replace(/\ba\s+la\s+trastienda\b/gi, 'a los Backrooms')
-    .replace(/\bde\s+la\s+trastienda\b/gi, 'de los Backrooms')
+    .replace(/\b(?:las|la)[ \t]+trastiendas?\b/gi, 'los Backrooms')
+    .replace(/\ben[ \t]+la[ \t]+trastienda\b/gi, 'en los Backrooms')
+    .replace(/\ba[ \t]+la[ \t]+trastienda\b/gi, 'a los Backrooms')
+    .replace(/\bde[ \t]+la[ \t]+trastienda\b/gi, 'de los Backrooms')
     .replace(/\btrastiendas?\b/gi, 'Backrooms')
-    .replace(/\b(?:las\s+)?salas?\s+delanteras?\b/gi, 'los Frontrooms')
-    .replace(/\bcuartos?\s+delanteros?\b/gi, 'los Frontrooms')
-    .replace(/\bhabitaciones?\s+delanteras?\b/gi, 'los Frontrooms')
+    .replace(/\b(?:las[ \t]+)?salas?[ \t]+delanteras?\b/gi, 'los Frontrooms')
+    .replace(/\bcuartos?[ \t]+delanteros?\b/gi, 'los Frontrooms')
+    .replace(/\bhabitaciones?[ \t]+delanteras?\b/gi, 'los Frontrooms')
 
     // 2. Noclip mechanics
-    .replace(/\b(?:sin\s+clip|no\s+clip|no\s+hacer\s+clip)\b/gi, 'noclip')
-    .replace(/\bno\s+haces\s+clip\b/gi, 'haces noclip')
-    .replace(/\bhaces\s+no\s+clip\b/gi, 'haces noclip')
-    .replace(/\b(haces|hacer|haciendo|hizo)\s+clip\b/gi, '$1 noclip')
+    .replace(/\b(?:sin[ \t]+clip|no[ \t]+clip|no[ \t]+hacer[ \t]+clip)\b/gi, 'noclip')
+    .replace(/\bno[ \t]+haces[ \t]+clip\b/gi, 'haces noclip')
+    .replace(/\bhaces[ \t]+no[ \t]+clip\b/gi, 'haces noclip')
+    .replace(/\b(haces|hacer|haciendo|hizo)[ \t]+clip\b/gi, '$1 noclip')
     .replace(/\bnoclips\b/gi, 'haces noclip')
 
     // 3. Canon & Collaborative writing idioms
-    .replace(/\bcañ[oó]n\b/gi, 'canon')
-    .replace(/\bcánones\b/gi, 'cánones')
-    .replace(/\b(?:historias\s+cruzadas|cruce)\s+y\s+decadencia(?:\s+del\s+canon)?\b/gi, 'Cruce de Cánones y Decadencia')
-    .replace(/\bcruce\s+del\s+canon\b/gi, 'Cruce de Cánones')
-    .replace(/\bcruce\s+de\s+canon\b/gi, 'Cruce de Cánones')
-    .replace(/\bcruce\s+y\s+decadencia\s+del\s+canon\b/gi, 'Cruce de Cánones y Decadencia')
+    .replace(/\b(?:historias[ \t]+cruzadas|cruce)[ \t]+y[ \t]+decadencia(?:[ \t]+del[ \t]+canon)?\b/gi, 'Cruce de Cánones y Decadencia')
+    .replace(/\bcruce[ \t]+del[ \t]+canon\b/gi, 'Cruce de Cánones')
+    .replace(/\bcruce[ \t]+de[ \t]+canon\b/gi, 'Cruce de Cánones')
+    .replace(/\bcruce[ \t]+y[ \t]+decadencia[ \t]+del[ \t]+canon\b/gi, 'Cruce de Cánones y Decadencia')
     .replace(
-      /está totalmente bien (?:canon cruzar|hacer un cruce de canon con|crear cruces de canon con|hacer un cruce canónico|cruzar canónicamente|crear cruces entre)\s+otros cánones\s+y\s+(?:Decay|DK|decadencia|el canon decay)/gi,
+      /está totalmente bien (?:canon cruzar|hacer un cruce de canon con|crear cruces de canon con|hacer un cruce canónico|cruzar canónicamente|crear cruces entre)[ \t]+otros cánones[ \t]+y[ \t]+(?:Decay|DK|decadencia|el canon decay)/gi,
       'está totalmente permitido realizar cruces narrativos entre otros cánones y el Canon de Decadencia'
     )
-    .replace(/\bestá\s+totalmente\s+bien\s+(?:canon\s+cruzar|crear\s+cruces\s+de\s+canon\s+con)\b/gi, 'está totalmente permitido realizar cruces narrativos con')
-    .replace(/\botros\s+cánones\s+y\s+(?:DK|Decay)\b/gi, 'otros cánones y el Canon de Decadencia')
-    .replace(/\bcanon\s+cruzar\b/gi, 'realizar cruces narrativos con')
-    .replace(/\bel\s+canon\s+Decay\b/gi, 'el Canon de Decadencia')
-    .replace(/\bDecay\s+Canon\b/gi, 'Canon de Decadencia')
-    .replace(/\bThe\s+Decay\b/gi, 'la Decadencia')
-    .replace(/\bescritura\s+de\s+Decay\b/gi, 'narrativa de Decadencia')
-    .replace(/\ben\s+el\s+contexto\s+de\s+Decay\b/gi, 'en el contexto de Decadencia')
-    .replace(/\bes\s+Decay\s+en\s+s[ií]\b/gi, 'es la propia Decadencia')
+    .replace(/\bestá[ \t]+totalmente[ \t]+bien[ \t]+(?:canon[ \t]+cruzar|crear[ \t]+cruces[ \t]+de[ \t]+canon[ \t]+con)\b/gi, 'está totalmente permitido realizar cruces narrativos con')
+    .replace(/\botros[ \t]+cánones[ \t]+y[ \t]+(?:DK|Decay)\b/gi, 'otros cánones y el Canon de Decadencia')
+    .replace(/\bcanon[ \t]+cruzar\b/gi, 'realizar cruces narrativos con')
+    .replace(/\bel[ \t]+canon[ \t]+Decay\b/gi, 'el Canon de Decadencia')
+    .replace(/\bDecay[ \t]+Canon\b/gi, 'Canon de Decadencia')
+    .replace(/\bThe[ \t]+Decay\b/gi, 'la Decadencia')
+    .replace(/\bescritura[ \t]+de[ \t]+Decay\b/gi, 'narrativa de Decadencia')
+    .replace(/\ben[ \t]+el[ \t]+contexto[ \t]+de[ \t]+Decay\b/gi, 'en el contexto de Decadencia')
+    .replace(/\bes[ \t]+Decay[ \t]+en[ \t]+s[ií]\b/gi, 'es la propia Decadencia')
     .replace(/\bDK\b(?=.*(?:canon|decadencia|backrooms))/gi, 'Decadencia')
 
     // 4. Backrooms Lore Entities, Items, and Groups
     .replace(/\bvagabundo\b/gi, 'explorador')
     .replace(/\bvagabundos\b/gi, 'exploradores')
-    .replace(/\bladr[oó]n\s+de\s+pieles?\b/gi, 'Ladrón de Piel')
-    .replace(/\bladrones\s+de\s+pieles?\b/gi, 'Ladrones de Piel')
-    .replace(/\bpolillas?\s+de\s+la\s+muerte\b/gi, 'Polillas de la Muerte')
+    .replace(/\bladr[oó]n[ \t]+de[ \t]+pieles?\b/gi, 'Ladrón de Piel')
+    .replace(/\bladrones[ \t]+de[ \t]+pieles?\b/gi, 'Ladrones de Piel')
+    .replace(/\bpolillas?[ \t]+de[ \t]+la[ \t]+muerte\b/gi, 'Polillas de la Muerte')
     .replace(/\bsabuesos?\b/gi, 'Sabuesos')
     .replace(/\bsonrientes?\b/gi, 'Sonrientes')
-    .replace(/\bagua\s+de\s+almendra\b/gi, 'Agua de Almendras')
-    .replace(/\bespacio\s+(?:de\s+cabeza|mental\s+\(headspace\))\b/gi, 'espacio mental (Headspace)')
-    .replace(/\btanque\s+de\s+pensamiento\b/gi, 'centro de investigación')
-    .replace(/\binstituto\s+de\s+investigaci[oó]n\b/gi, 'centro de investigación')
-    .replace(/\bpuntaje\s+heimwehmut\b/gi, 'puntuación Heimwehmut')
-    .replace(/\bestados?\s+post-?empleales?\b/gi, 'estados de finalización de servicio')
-    .replace(/\bsujetos?\s+de\s+prueba\s+sueños?\b/gi, 'sujetos de prueba en fase de sueño')
-    .replace(/\bse\s+ha\s+quedado\s+m[aá]s\b/gi, 'ha permanecido activo')
+    .replace(/\bagua[ \t]+de[ \t]+almendra\b/gi, 'Agua de Almendras')
+    .replace(/\bespacio[ \t]+(?:de[ \t]+cabeza|mental[ \t]+\(headspace\))\b/gi, 'espacio mental (Headspace)')
+    .replace(/\btanque[ \t]+de[ \t]+pensamiento\b/gi, 'centro de investigación')
+    .replace(/\binstituto[ \t]+de[ \t]+investigaci[oó]n\b/gi, 'centro de investigación')
+    .replace(/\bpuntaje[ \t]+heimwehmut\b/gi, 'puntuación Heimwehmut')
+    .replace(/\bestados?[ \t]+post-?empleales?\b/gi, 'estados de finalización de servicio')
+    .replace(/\bsujetos?[ \t]+de[ \t]+prueba[ \t]+sueños?\b/gi, 'sujetos de prueba en fase de sueño')
 
     // 5. Spanish grammatical contractions and typography cleanups
-    .replace(/\bde\s+el\b/gi, 'del')
-    .replace(/\ba\s+el\b/gi, 'al')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([,.:;?!])/g, '$1')
-    .replace(/\(\s+/g, '(')
-    .replace(/\s+\)/g, ')')
-    .replace(/¿\s+/g, '¿')
-    .replace(/¡\s+/g, '¡');
+    .replace(/\bde[ \t]+el\b/gi, 'del')
+    .replace(/\ba[ \t]+el\b/gi, 'al')
+    // Normalize duplicate spaces without flattening Wikidot paragraph and line breaks.
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\r?\n[ \t]*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+([,.:;?!])/g, '$1')
+    .replace(/\([ \t]+/g, '(')
+    .replace(/[ \t]+\)/g, ')')
+    .replace(/¿[ \t]+/g, '¿')
+    .replace(/¡[ \t]+/g, '¡');
 }
 
 /**
  * Free Neural Translation service for articles missing Spanish Wikidot translation
  */
-async function translateChunk(text: string, targetLang = 'es', sourceLang = 'en'): Promise<string> {
+async function translateChunk(text: string, targetLang = 'es', sourceLang = 'en', signal?: AbortSignal): Promise<string> {
   if (!text || text.trim().length === 0) return text;
-  try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url);
-    if (!res.ok) return text;
-    const data = await res.json();
-    return data[0].map((item: any) => item[0]).join('');
-  } catch {
-    return text;
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await withTranslationSlot(signal, () => fetchWithTimeout(url, { signal }));
+      if (res.ok) {
+        const data: unknown = await res.json();
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          const translated = (data[0] as unknown[]).map((item) => Array.isArray(item) && typeof item[0] === 'string' ? item[0] : '').join('');
+          if (translated.trim()) return translated;
+        }
+      }
+    } catch {
+      if (signal?.aborted) throw new Error('Translation aborted');
+    }
+
+    if (attempt === 0) {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      if (signal?.aborted) throw new Error('Translation aborted');
+    }
   }
+
+  return text;
 }
 
-export async function translateText(text: string, targetLang = 'es', sourceLang = 'en'): Promise<string> {
+export async function translateText(text: string, targetLang = 'es', sourceLang = 'en', signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) throw new Error('Translation aborted');
   if (!text || text.trim().length === 0) return text;
 
   // Pre-process text before translation if translating en -> es to guide grammar and preserve lore idioms
@@ -552,19 +654,38 @@ export async function translateText(text: string, targetLang = 'es', sourceLang 
   const batches: string[] = [];
   let currentBatch = '';
 
-  for (const p of paragraphs) {
-    if ((currentBatch + '\n\n' + p).length < 1100) {
-      currentBatch = currentBatch ? `${currentBatch}\n\n${p}` : p;
-    } else {
-      if (currentBatch) batches.push(currentBatch);
-      currentBatch = p;
+  const appendChunkedParagraph = (paragraph: string) => {
+    let remaining = paragraph;
+    while (remaining.length > 1000) {
+      let splitAt = remaining.lastIndexOf(' ', 1000);
+      if (splitAt < 300) splitAt = 1000;
+      batches.push(remaining.slice(0, splitAt));
+      remaining = remaining.slice(splitAt).trimStart();
     }
+    if (remaining) {
+      if (currentBatch && (currentBatch + '\n\n' + remaining).length <= 1000) {
+        currentBatch += `\n\n${remaining}`;
+      } else {
+        if (currentBatch) batches.push(currentBatch);
+        currentBatch = remaining;
+      }
+    }
+  };
+  for (const p of paragraphs) {
+    appendChunkedParagraph(p);
   }
   if (currentBatch) batches.push(currentBatch);
 
-  const translatedBatches = await Promise.all(
-    batches.map(b => translateChunk(b, targetLang, sourceLang))
-  );
+  const translatedBatches: string[] = new Array(batches.length);
+  let nextBatch = 0;
+  const worker = async () => {
+    while (nextBatch < batches.length) {
+      if (signal?.aborted) throw new Error('Translation aborted');
+      const index = nextBatch++;
+      translatedBatches[index] = await translateChunk(batches[index], targetLang, sourceLang, signal);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, batches.length) }, worker));
 
   let result = translatedBatches.join('\n\n');
 
@@ -576,6 +697,110 @@ export async function translateText(text: string, targetLang = 'es', sourceLang 
 
   // Post-process with polishSpanishTranslation if target is Spanish
   return targetLang === 'es' ? polishSpanishTranslation(result) : result;
+}
+
+const SPANISH_TITLE_PROTECTED_TERMS = [
+  'Backrooms', 'Frontrooms', 'M.E.G.', 'U.E.C.', 'B.N.T.G.', 'Wikidot',
+  'The Hub', 'The End', 'The Void', 'The Manila Room', 'The Yellow King', 'Yellow King',
+  'Partygoers', 'Facelings', 'Smilers', 'Noclip', 'Heimwehmut', 'Neith',
+];
+
+function maskTitleTerms(text: string, terms: string[]) {
+  let value = text;
+  for (const [index, term] of terms.entries()) {
+    value = value.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), `ZXQTERM${index}QXZ`);
+  }
+  return value;
+}
+
+function restoreTitleTerms(text: string, terms: string[]) {
+  return text.replace(/ZXQTERM(\d+)QXZ/gi, (_match, index: string) => terms[Number(index)] || _match);
+}
+
+/** Translate unlocalized list titles in small batches; identifiers and lore names stay intact. */
+export async function translateListTitlesToSpanish(
+  items: WikiListItem[],
+  signal?: AbortSignal,
+): Promise<WikiListItem[]> {
+  const records = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.lang !== 'es' || isLikelyEnglishHeading(item.title) || isLikelyEnglishHeading(item.subTitle || ''));
+  if (records.length === 0) return items;
+
+  // Keep GET requests within conservative URL limits (titles can include long subtitles).
+  const batchSize = 8;
+  const batches: typeof records[] = [];
+  for (let index = 0; index < records.length; index += batchSize) {
+    batches.push(records.slice(index, index + batchSize));
+  }
+
+  let nextBatch = 0;
+  const worker = async () => {
+    while (nextBatch < batches.length) {
+      if (signal?.aborted) throw new Error('Translation aborted');
+      const batch = batches[nextBatch++];
+      const terms = SPANISH_TITLE_PROTECTED_TERMS;
+      const payload = batch.map(({ item, index }) => {
+        const title = item.category === 'poi' ? item.title : maskTitleTerms(item.title, terms);
+        const subtitle = item.subTitle ? maskTitleTerms(item.subTitle, terms) : '';
+        return `ZXQT${index}QXZ${title}ZXQS${index}QXZ${subtitle}`;
+      }).join('\n');
+
+      const translated = await translateChunk(payload, 'es', 'en', signal);
+      if (translated === payload) continue;
+      for (let position = 0; position < batch.length; position++) {
+        const { item, index } = batch[position];
+        const titleMarker = `ZXQT${index}QXZ`;
+        const subtitleMarker = `ZXQS${index}QXZ`;
+        const titleStart = translated.indexOf(titleMarker);
+        const subtitleStart = translated.indexOf(subtitleMarker, titleStart + titleMarker.length);
+        if (titleStart === -1 || subtitleStart === -1) continue;
+
+        const nextRecord = batch[position + 1];
+        const nextMarker = nextRecord ? `ZXQT${nextRecord.index}QXZ` : '';
+        const nextStart = nextMarker ? translated.indexOf(nextMarker, subtitleStart + subtitleMarker.length) : -1;
+        const rawTitle = translated.slice(titleStart + titleMarker.length, subtitleStart).trim();
+        const rawSubtitle = translated.slice(
+          subtitleStart + subtitleMarker.length,
+          nextStart === -1 ? translated.length : nextStart,
+        ).trim();
+        const translatedTitle = item.category === 'poi'
+          ? item.title
+          : polishSpanishTranslation(restoreTitleTerms(rawTitle, terms));
+        const title = translatedTitle.trim() ? translatedTitle : item.title;
+        const translatedSubTitle = rawSubtitle
+          ? polishSpanishTranslation(restoreTitleTerms(rawSubtitle, terms))
+          : undefined;
+        const subTitle = translatedSubTitle?.trim() ? translatedSubTitle : item.subTitle;
+
+        if (!title.trim()) continue;
+
+        item.title = title;
+        item.subTitle = subTitle;
+        item.displayName = subTitle ? `${title} - "${subTitle}"` : title;
+        item.lang = 'es';
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(3, batches.length) }, worker));
+  return items;
+}
+
+function isLikelyEnglishHeading(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[^a-z\s]/g, ' ').trim();
+  if (!normalized) return false;
+  return /\b(a|an|the|and|of|in|at|to|is|are|this|that|with|for|from|by|how|what|why|description|overview|entrances?|exits?|level|entity|object|phenomenon|group|classified|survival|difficulty|safe|unsafe|secure|unsecure|devoid|count|habitable|deadzone|pending|about|history|appearance|behavior|containment|discovery|properties|effects|rules|requirements|notes|warning|report|entry|data|location|found|known|individual|description|summary|related|articles|references|exploration|colonies|recovery|research|person|persons|interest|threat|hazard|travel|method|route|discovery|effects|causes)\b/i.test(normalized);
+}
+
+function isLikelyEnglishProse(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-záéíóúüñ]+/g) || [];
+  if (words.length < 18) return false;
+  const english = new Set(['the', 'and', 'of', 'to', 'in', 'is', 'are', 'was', 'were', 'with', 'for', 'from', 'that', 'this', 'it', 'they', 'their', 'you', 'your', 'as', 'by', 'on', 'at', 'be', 'been', 'has', 'have', 'had', 'will', 'can', 'not', 'but', 'or', 'an', 'into', 'which', 'who', 'what', 'when', 'where', 'there', 'here', 'its', 'these', 'those', 'during', 'after', 'before', 'through']);
+  const spanish = new Set(['el', 'la', 'los', 'las', 'de', 'del', 'y', 'en', 'es', 'son', 'fue', 'eran', 'con', 'para', 'por', 'que', 'se', 'un', 'una', 'unos', 'unas', 'su', 'sus', 'como', 'pero', 'o', 'no', 'al', 'desde', 'hasta', 'sobre', 'entre', 'también', 'este', 'esta', 'estos', 'estas', 'hay', 'ser', 'estar', 'está', 'están', 'han', 'tiene', 'tienen', 'puede', 'pueden', 'donde', 'cuando', 'quien', 'quienes']);
+  const englishCount = words.reduce((count, word) => count + Number(english.has(word)), 0);
+  const spanishCount = words.reduce((count, word) => count + Number(spanish.has(word)), 0);
+  return englishCount >= 3 && englishCount >= spanishCount * 1.25;
 }
 
 /**
@@ -612,16 +837,52 @@ function convertHtmlLinksToMarkdown(html: string): string {
   return processed;
 }
 
+function convertHtmlTablesToReadableRows(html: string): string {
+  return html.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (rowMarkup, rowContent: string) => {
+    const cells = [...rowContent.matchAll(/<(td|th)\b[^>]*>([\s\S]*?)<\/\1>/gi)]
+      .filter(cell => decodeHtmlEntities(cell[2].replace(/<[^>]+>/g, '')).trim().length > 0);
+    if (cells.length === 0) return rowMarkup;
+    if (cells.length === 1) return `<p>${cells[0][2]}</p>`;
+    if (cells.length === 2) return `<p>${cells[0][2]}: ${cells[1][2]}</p>`;
+    return `<p>${cells.map(cell => cell[2]).join(' | ')}</p>`;
+  });
+}
+
+function convertHtmlListsToReadableRows(html: string): string {
+  const listStack: { ordered: boolean; nextNumber: number }[] = [];
+  const nestedBullets = ['•', '◦', '▪', '‣'];
+
+  return html.replace(/<(\/)?(ul|ol)\b[^>]*>|<(\/)?li\b[^>]*>/gi, (tag, listClose: string | undefined, listType: string | undefined, itemClose: string | undefined) => {
+    if (listType) {
+      if (listClose) listStack.pop();
+      else {
+        const start = tag.match(/\bstart=["']?(\d+)/i);
+        listStack.push({ ordered: listType.toLowerCase() === 'ol', nextNumber: start ? Number(start[1]) : 1 });
+      }
+      return '\n';
+    }
+
+    if (itemClose) return '\n';
+    const depth = Math.max(0, listStack.length - 1);
+    const activeList = listStack[listStack.length - 1];
+    if (activeList?.ordered) {
+      const prefix = depth > 0 ? `${'↳'.repeat(Math.min(depth, 3))} ` : '';
+      return `\n${prefix}${activeList.nextNumber++}. `;
+    }
+    return `\n${nestedBullets[Math.min(depth, nestedBullets.length - 1)]} `;
+  });
+}
+
 function stripHtml(html: string): string {
-  const withMarkdownLinks = convertHtmlLinksToMarkdown(html);
+  const structuredMarkup = convertHtmlListsToReadableRows(convertHtmlTablesToReadableRows(html));
+  const withMarkdownLinks = convertHtmlLinksToMarkdown(structuredMarkup);
   return decodeHtmlEntities(
     withMarkdownLinks
       .replace(/<br\s*[\/]?>/gi, '\n')
       .replace(/<\/p>/gi, '\n\n')
       .replace(/<\/div>/gi, '\n')
       .replace(/<\/tr>/gi, '\n')
-      .replace(/<td[^>]*>/gi, '  ')
-      .replace(/<li[^>]*>/gi, '\n• ')
+      .replace(/<t[dh][^>]*>/gi, '')
       .replace(/<[^>]+>/g, '')
       .replace(/[ \t]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
@@ -739,11 +1000,10 @@ function extractYuiTabs(html: string): { tabs: DossierTab[]; remainingHtml: stri
 
     const tabBlocks = contentHtml.split(/<div id="wiki-tab-\d+-\d+"[^>]*>/i).slice(1);
     for (let i = 0; i < tabBlocks.length && i < titles.length; i++) {
-      tabs.push({
-        id: `tab-${tabSetIndex}-${i}`,
-        title: titles[i] || `Pestaña ${tabs.length + 1}`,
-        content: stripHtml(tabBlocks[i]),
-      });
+      const title = titles[i]?.trim();
+      const content = stripHtml(tabBlocks[i]);
+      if (!title || !content.trim()) continue;
+      tabs.push({ id: `tab-${tabSetIndex}-${i}`, title, content });
     }
 
     // Preserve all content prior to and after the tabs
@@ -764,7 +1024,7 @@ function cleanDisclaimersAndJunk(html: string): string {
   cleaned = unwrapCollapsibles(cleaned);
 
   // 3. Strip widget boxes cleanly using depth-aware findClosingDiv
-  const boxClasses = ['translations', 'list-pages-box', 'creditRate', 'infobox'];
+  const boxClasses = ['translations', 'list-pages-box', 'creditRate'];
   for (const cls of boxClasses) {
     const reg = new RegExp(`<div[^>]*class="[^"]*\\b${cls}\\b[^"]*"[^>]*>`, 'gi');
     let m;
@@ -784,8 +1044,6 @@ function cleanDisclaimersAndJunk(html: string): string {
     // Remove scripts and styles
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
-    // Remove u-infobox
-    .replace(/<div[^>]*id="u-infobox"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/div>/gi, '')
     // Remove rating and credits widgets
     .replace(/<div[^>]*class="[^"]*rateBox[^"]*"[\s\S]*?<\/div>/gi, '')
     .replace(/<div[^>]*class="[^"]*page-rate-widget-box[^"]*"[\s\S]*?<\/div>/gi, '')
@@ -847,7 +1105,7 @@ export function getEntityTags(numberStr: string, subTitle?: string, lang: 'es' |
   if (isNaN(num)) {
     tags.push(lang === 'es' ? 'Desconocido' : 'Unknown');
   }
-  tags.push('M.E.G. Log');
+  tags.push(lang === 'es' ? 'Registro M.E.G.' : 'M.E.G. Log');
   return tags;
 }
 
@@ -866,7 +1124,7 @@ function getEntitySnippet(title: string, subTitle?: string, lang: 'es' | 'en' = 
   }
 }
 
-const CANON_SPANISH_TITLES: Record<string, string> = {
+export const CANON_SPANISH_TITLES: Record<string, string> = {
   '/black-knights': 'Caballeros Negros',
   '/decay-canon-hub': 'Canon de Decadencia',
   '/desolation-canon-hub': 'Canon de la Desolación',
@@ -907,7 +1165,7 @@ export class WikidotService {
   static async fetchLevels(lang: 'es' | 'en' = 'es'): Promise<WikiListItem[]> {
     try {
       // 1. Fetch main English list (+600 levels)
-      const enRes = await fetch(`${BASE_EN}/normal-levels-i`);
+      const enRes = await fetchWithTimeout(`${BASE_EN}/normal-levels-i`);
       if (!enRes.ok) throw new Error(`HTTP error ${enRes.status}`);
       const enHtml = await enRes.text();
 
@@ -946,7 +1204,7 @@ export class WikidotService {
       // 2. If Spanish is requested, fetch and overlay the official Spanish titles
       if (lang === 'es') {
         try {
-          const esRes = await fetch(`${BASE_ES}/normal-levels-i`);
+          const esRes = await fetchWithTimeout(`${BASE_ES}/normal-levels-i`);
           if (esRes.ok) {
             const esHtml = await esRes.text();
             const esMatches = [...esHtml.matchAll(regex)];
@@ -979,6 +1237,7 @@ export class WikidotService {
         }
       }
 
+      if (lang === 'es') await translateListTitlesToSpanish(list);
       for (const item of list) {
         item.tags = getLevelTags(item.numberStr, item.subTitle, lang);
         item.snippet = getLevelSnippet(item.title, item.subTitle, item.numberStr, lang);
@@ -1003,7 +1262,7 @@ export class WikidotService {
    */
   static async fetchEntities(lang: 'es' | 'en' = 'es'): Promise<WikiListItem[]> {
     try {
-      const enRes = await fetch(`${BASE_EN}/entities`);
+      const enRes = await fetchWithTimeout(`${BASE_EN}/entities`);
       if (!enRes.ok) throw new Error(`HTTP error ${enRes.status}`);
       const enHtml = await enRes.text();
 
@@ -1042,7 +1301,7 @@ export class WikidotService {
       // If Spanish, overlay Spanish translations
       if (lang === 'es') {
         try {
-          const esRes = await fetch(`${BASE_ES}/entities`);
+          const esRes = await fetchWithTimeout(`${BASE_ES}/entities`);
           if (esRes.ok) {
             const esHtml = await esRes.text();
             const esMatches = [...esHtml.matchAll(regex)];
@@ -1074,6 +1333,7 @@ export class WikidotService {
         }
       }
 
+      if (lang === 'es') await translateListTitlesToSpanish(list);
       for (const item of list) {
         item.tags = getEntityTags(item.numberStr, item.subTitle, lang);
         item.snippet = getEntitySnippet(item.title, item.subTitle, lang);
@@ -1101,7 +1361,7 @@ export class WikidotService {
     const enUrl = `${BASE_EN}${cat.pathEn}`;
 
     try {
-      const enRes = await fetch(enUrl);
+      const enRes = await fetchWithTimeout(enUrl);
       if (!enRes.ok) throw new Error(`HTTP error ${enRes.status} for ${enUrl}`);
       const enHtml = await enRes.text();
 
@@ -1375,7 +1635,7 @@ export class WikidotService {
       // If Spanish, overlay Spanish translations if available
       if (lang === 'es' && cat.pathEs) {
         try {
-          const esRes = await fetch(`${BASE_ES}${cat.pathEs}`);
+          const esRes = await fetchWithTimeout(`${BASE_ES}${cat.pathEs}`);
           if (esRes.ok) {
             const esHtml = await esRes.text();
             const esStart = esHtml.indexOf('id="page-content"');
@@ -1416,7 +1676,7 @@ export class WikidotService {
       // Support overlay for Hispanic community objects (/objeto-es-*)
       if (lang === 'es' && cat.key === 'objects') {
         try {
-          const hispRes = await fetch(`${BASE_ES}/objetos`);
+          const hispRes = await fetchWithTimeout(`${BASE_ES}/objetos`);
           if (hispRes.ok) {
             const hispHtml = await hispRes.text();
             const hStart = hispHtml.indexOf('id="page-content"');
@@ -1456,6 +1716,16 @@ export class WikidotService {
         }
       }
 
+      if (lang === 'es') {
+        await translateListTitlesToSpanish(list);
+        for (const item of list) {
+          const secondaryTags = item.tags?.slice(1) || ['#M.E.G.', '#Archivo'];
+          item.tags = [`#${getLibraryCategoryBadge(categoryKey, 'es')}`, ...secondaryTags];
+          item.snippet = item.subTitle
+            ? `\"${item.subTitle}\" — Expediente clasificado del M.E.G. (${cat.titleEs}).`
+            : `Expediente oficial del archivo del M.E.G. (${cat.titleEs}).`;
+        }
+      }
       return list;
     } catch (err) {
       console.error(`Error in fetchLibraryCategory (${categoryKey}):`, err);
@@ -1498,11 +1768,11 @@ export class WikidotService {
     let url = `${lang === 'es' && resolvedCategory !== 'canon' ? BASE_ES : BASE_EN}${cleanPath}`;
     let isFallback = false;
 
-    let res = await fetch(url, { signal });
+    let res = await fetchWithTimeout(url, { signal });
     if (!res.ok && lang === 'es') {
       // If not yet translated in Spanish branch, fallback to English
       url = `${BASE_EN}${cleanPath}`;
-      res = await fetch(url, { signal });
+      res = await fetchWithTimeout(url, { signal });
       isFallback = true;
     }
 
@@ -1566,17 +1836,17 @@ export class WikidotService {
           title = title.replace('Entity ', 'Entidad ');
         }
         if (subTitle) {
-          subTitle = await translateText(subTitle, 'es', 'en');
+          subTitle = await translateText(subTitle, 'es', 'en', signal);
         }
 
         // Translate prologue
         if (prologue) {
-          prologue = await translateText(prologue, 'es', 'en');
+          prologue = await translateText(prologue, 'es', 'en', signal);
         }
 
         // Translate description
         if (description) {
-          description = await translateText(description, 'es', 'en');
+          description = await translateText(description, 'es', 'en', signal);
         }
 
         const translateHeading = (t: string) => {
@@ -1592,8 +1862,8 @@ export class WikidotService {
           sections.map(async (sec) => {
             const mappedTitle = translateHeading(sec.title);
             return {
-              title: mappedTitle || (await translateText(sec.title, 'es', 'en')),
-              content: await translateText(sec.content, 'es', 'en'),
+              title: mappedTitle || (await translateText(sec.title, 'es', 'en', signal)),
+              content: await translateText(sec.content, 'es', 'en', signal),
             };
           })
         );
@@ -1605,8 +1875,8 @@ export class WikidotService {
               const mappedTab = translateHeading(t.title);
               return {
                 id: t.id,
-                title: mappedTab || (await translateText(t.title, 'es', 'en')),
-                content: await translateText(t.content, 'es', 'en'),
+                title: mappedTab || (await translateText(t.title, 'es', 'en', signal)),
+                content: await translateText(t.content, 'es', 'en', signal),
               };
             })
           );
@@ -1614,15 +1884,15 @@ export class WikidotService {
 
         // Translate epilogue
         if (epilogue) {
-          epilogue = await translateText(epilogue, 'es', 'en');
+          epilogue = await translateText(epilogue, 'es', 'en', signal);
         }
 
         // Translate entrances & exits
         if (entrances.length > 0) {
-          entrances = await Promise.all(entrances.map(e => translateText(e, 'es', 'en')));
+          entrances = await Promise.all(entrances.map(e => translateText(e, 'es', 'en', signal)));
         }
         if (exits.length > 0) {
-          exits = await Promise.all(exits.map(e => translateText(e, 'es', 'en')));
+          exits = await Promise.all(exits.map(e => translateText(e, 'es', 'en', signal)));
         }
       } catch (transErr) {
         console.warn('Auto-translation failed, keeping English text:', transErr);
@@ -1656,6 +1926,64 @@ export class WikidotService {
       if (exits && exits.length > 0) {
         exits = exits.map(e => polishSpanishTranslation(e));
       }
+    }
+
+    // Spanish Wikidot pages can still have English page titles or section labels.
+    // Translate only headings detected as English so official Spanish prose is not retranslated.
+    if (lang === 'es' && !isFallback) {
+      const localizeHeading = async (value?: string) => {
+        if (!value) return value;
+        const trimmed = value.trim();
+        if (/^level\s+(\S.*)$/i.test(trimmed)) {
+          return trimmed.replace(/^level\s+/i, 'Nivel ');
+        }
+        if (/^entity\s+(\S.*)$/i.test(trimmed)) {
+          return trimmed.replace(/^entity\s+/i, 'Entidad ');
+        }
+        if (/^object\s+(\S.*)$/i.test(trimmed)) {
+          return trimmed.replace(/^object\s+/i, 'Objeto ');
+        }
+        if (/^phenomenon\s+(\S.*)$/i.test(trimmed)) {
+          return trimmed.replace(/^phenomenon\s+/i, 'Fenómeno ');
+        }
+        if (!isLikelyEnglishHeading(value)) return value;
+        const masked = maskTitleTerms(value, SPANISH_TITLE_PROTECTED_TERMS);
+        const translated = await translateText(masked, 'es', 'en', signal);
+        return polishSpanishTranslation(restoreTitleTerms(translated, SPANISH_TITLE_PROTECTED_TERMS));
+      };
+      const localizeProse = async (value?: string) => {
+        if (!value) return value;
+        const lines = await Promise.all(value.split('\n').map(async line => {
+          const boldHeading = line.match(/^(\s*\*\*)(.+?)(\*\*\s*)$/);
+          if (!boldHeading || !isLikelyEnglishHeading(boldHeading[2])) return line;
+          return `${boldHeading[1]}${(await localizeHeading(boldHeading[2])) || boldHeading[2]}${boldHeading[3]}`;
+        }));
+        const withLocalizedHeadings = lines.join('\n');
+        if (!isLikelyEnglishProse(withLocalizedHeadings)) return withLocalizedHeadings;
+        const masked = maskTitleTerms(withLocalizedHeadings, SPANISH_TITLE_PROTECTED_TERMS);
+        const translated = await translateText(masked, 'es', 'en', signal);
+        return polishSpanishTranslation(restoreTitleTerms(translated, SPANISH_TITLE_PROTECTED_TERMS));
+      };
+
+      if (resolvedCategory !== 'poi') title = (await localizeHeading(title)) || title;
+      subTitle = await localizeHeading(subTitle);
+      prologue = await localizeProse(prologue);
+      description = (await localizeProse(description)) || description;
+      sections = await Promise.all(sections.map(async section => ({
+        ...section,
+        title: (await localizeHeading(section.title)) || section.title,
+        content: (await localizeProse(section.content)) || section.content,
+      })));
+      if (tabs?.length) {
+        tabs = await Promise.all(tabs.map(async tab => ({
+          ...tab,
+          title: (await localizeHeading(tab.title)) || tab.title,
+          content: (await localizeProse(tab.content)) || tab.content,
+        })));
+      }
+      epilogue = await localizeProse(epilogue);
+      entrances = await Promise.all(entrances.map(async entry => (await localizeProse(entry)) || entry));
+      exits = await Promise.all(exits.map(async entry => (await localizeProse(entry)) || entry));
     }
 
     return {
@@ -1887,9 +2215,8 @@ export class WikidotService {
         .trim();
       if (!headerTitle) continue;
 
-      if (headerTitle.toUpperCase() === 'BODY:' || headerTitle.toUpperCase() === 'BODY') {
-        headerTitle = 'Registro de Datos';
-      }
+      const isBodyMarker = /^(?:BODY|CUERPO):?$/i.test(headerTitle);
+      if (isBodyMarker) headerTitle = '';
 
       const headerIndex = matches[i].index ?? cleanBody.indexOf(matches[i][0]);
       const nextHeaderIndex = i + 1 < matches.length
@@ -1981,9 +2308,6 @@ export class WikidotService {
     if (descIndex !== -1) {
       description = sections[descIndex].content;
       sections.splice(descIndex, 1);
-    } else if (sections.length > 0) {
-      description = sections[0].content;
-      sections.shift();
     }
 
     return {
